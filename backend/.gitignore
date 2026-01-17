@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.DS_Store
+*.log
+test_download.png
+scripts/__pycache__/
+services/__pycache__/
+routes/__pycache__/
+utils/__pycache__/

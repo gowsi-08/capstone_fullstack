@@ -1,0 +1,23 @@
+# Backend
+backend/__pycache__/
+backend/*.py[cod]
+backend/.env
+backend/.venv
+backend/env/
+backend/venv/
+backend/*.log
+backend/test_download.png
+
+# Frontend
+frontend/.dart_tool/
+frontend/.flutter-plugins-dependencies
+frontend/.pub-cache/
+frontend/.pub/
+frontend/build/
+frontend/flutter_build.log
+frontend/*.iml
+frontend/.idea/
+
+# General
+.DS_Store
+*.log
