@@ -42,6 +42,8 @@ dependencies:
   permission_handler: ^11.0.1
   wifi_scan: ^0.4.1+2
   image_picker: ^1.0.4
+  app_settings: ^7.0.0
+  connectivity_plus: ^7.0.0
 
 dev_dependencies:
   flutter_test:

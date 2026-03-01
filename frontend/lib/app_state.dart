@@ -13,9 +13,13 @@ class AppState extends ChangeNotifier {
 
   String _selectedDestination = '';
   String _predictedRoom = 'Unknown';
+  String _userType = 'Guest';
+  bool _isAdmin = false;
 
   String get selectedDestination => _selectedDestination;
   String get predictedRoom => _predictedRoom;
+  String get userType => _userType;
+  bool get isAdmin => _isAdmin;
 
   void setSelectedDestination(String dest) {
     _selectedDestination = dest;
@@ -24,6 +28,12 @@ class AppState extends ChangeNotifier {
 
   void setPredictedRoom(String room) {
     _predictedRoom = room;
+    notifyListeners();
+  }
+
+  void setUser(String type, bool admin) {
+    _userType = type;
+    _isAdmin = admin;
     notifyListeners();
   }
 }

@@ -5,7 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:fluttertoast/fluttertoast.dart';
 import 'package:wifi_scan/wifi_scan.dart';
+import 'package:provider/provider.dart';
+import 'package:app_settings/app_settings.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'api_service.dart';
+import 'app_state.dart';
+import 'navigation_service.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({Key? key}) : super(key: key);
@@ -29,12 +34,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   Timer? _testTimer;
   Map<String, List<Map<String, dynamic>>> _groupedTestData = {};
 
-  // No static baseUrl here, use ApiService.baseUrl
-
   bool _isLoading = true;
   String? _errorMessage;
-
-
+  bool _wifiDisabled = false;
+  late StreamSubscription<List<ConnectivityResult>> _connectivitySubscription;
+  final NavigationService _navigationService = NavigationService();
+  List<Offset> _shortestPath = [];
 
   Uint8List? _mapImageBytes;
 
@@ -94,6 +99,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             for (var loc in data)
               loc['name']: Offset(loc['x'].toDouble(), loc['y'].toDouble())
           };
+          _navigationService.initGraph(roomPositions);
           if (roomPositions.isNotEmpty && predictedRoom.isEmpty) {
             predictedRoom = roomPositions.keys.first;
           }
@@ -138,25 +144,21 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     final sourceLocName = (locations..shuffle()).first;
     final group = _groupedTestData[sourceLocName]!;
     
-    // Process test data to look exactly like a real hardware scan
     List<Map<String, dynamic>> payload = group.map((row) => {
       'BSSID': row['BSSID'],
       'Signal Strength dBm': row['Signal Strength dBm'],
     }).toList();
     
-    // Unified API Handshake
     final result = await ApiService.predictLocation(payload);
     
     if (result != null) {
       final String predicted = result['predicted']!;
       final String source = result['source']!;
       String displayedRoom = predicted;
-      bool isFallback = false;
 
       if (!roomPositions.containsKey(displayedRoom)) {
         if (roomPositions.isNotEmpty) {
            displayedRoom = roomPositions.keys.first;
-           isFallback = true;
         }
       }
 
@@ -197,8 +199,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
- 
-
   bool _isLocating = false;
 
   @override
@@ -208,19 +208,37 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _loadFloorData();
     _fetchMapBytes();
     _fetchAllLocations();
-    // Fetch test data first so auto-locate simulation works on emulators
+    _checkWifiStatus();
+    _connectivitySubscription = Connectivity().onConnectivityChanged.listen((results) {
+      setState(() {
+        _wifiDisabled = !results.contains(ConnectivityResult.wifi);
+      });
+    });
     _fetchAndGroupTestData().then((_) {
        Future.delayed(const Duration(seconds: 1), _locateUser);
     });
   }
 
+  Future<void> _checkWifiStatus() async {
+    final List<ConnectivityResult> results = await Connectivity().checkConnectivity();
+    setState(() {
+      _wifiDisabled = !results.contains(ConnectivityResult.wifi);
+    });
+  }
+
   Future<void> _locateUser() async {
     if (_isLocating) return;
+
+    await _checkWifiStatus();
+    if (_wifiDisabled) {
+      AppSettings.openAppSettings(type: AppSettingsType.wifi);
+      return;
+    }
+
     setState(() => _isLocating = true);
 
     List<Map<String, dynamic>> payload = [];
 
-    // 1. Real Hardware Wi-Fi Scan
     try {
       final canScan = await WiFiScan.instance.canStartScan();
       if (canScan == CanStartScan.yes) {
@@ -231,49 +249,29 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
              'BSSID': ap.bssid,
              'Signal Strength dBm': ap.level,
            }).toList();
-           print("📡 REAL HARDWARE SCAN: Captured ${payload.length} Access Points");
          }
       }
     } catch (e) {
       print("Scan Error: $e");
     }
 
-    // 2. Terminate if no hardware data
     if (payload.isEmpty) {
       setState(() => _isLocating = false);
-      Fluttertoast.showToast(
-        msg: "⚠️ No Wi-Fi signals found. Ensure Wi-Fi/Location is ON.",
-        toastLength: Toast.LENGTH_LONG,
-        backgroundColor: Colors.redAccent
-      );
+      Fluttertoast.showToast(msg: "⚠️ No Wi-Fi signals found.");
       return;
     }
 
-    // 3. Official Backend Model Prediction
     final result = await ApiService.predictLocation(payload);
     
     setState(() => _isLocating = false);
 
     if (result != null) {
       final String predicted = result['predicted']!;
-      
-      setState(() {
-        predictedRoom = predicted;
-      });
-      
+      setState(() => predictedRoom = predicted);
       if (roomPositions.containsKey(predicted)) {
         _userMarkerController.forward(from: 0.7);
         _animateToLocation(roomPositions[predicted]!);
       }
-
-      Fluttertoast.showToast(
-        msg: "Live Location: $predicted",
-        toastLength: Toast.LENGTH_LONG,
-        backgroundColor: Colors.indigo,
-        textColor: Colors.white,
-      );
-    } else {
-      Fluttertoast.showToast(msg: "❌ ERROR: Server prediction failed.");
     }
   }
 
@@ -284,7 +282,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     final double screenWidth = MediaQuery.of(context).size.width;
     final double screenHeight = MediaQuery.of(context).size.height;
     
-    // Calculate translation to center the point
     final double transX = (screenWidth / 2) - (pos.dx * targetScale);
     final double transY = (screenHeight / 2) - (pos.dy * targetScale);
 
@@ -297,6 +294,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _connectivitySubscription.cancel();
     _searchController.dispose();
     _userMarkerController.dispose();
     _destMarkerController.dispose();
@@ -309,18 +307,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   Future<void> _fetchAllLocations() async {
     final locs = await ApiService.getAllLocations();
-    setState(() {
-      _allLocations = locs;
-    });
+    setState(() => _allLocations = locs);
   }
 
-  // Reload data when floor changes
   void _changeFloor(String floor) {
     setState(() {
       currentFloor = floor;
-      predictedRoom = ''; // Reset prediction
-      _mapImageBytes = null; // Clear old map
-      roomPositions.clear(); // Clear old markers
+      predictedRoom = '';
+      _mapImageBytes = null;
+      roomPositions.clear();
+      _shortestPath = [];
     });
     _loadFloorData();
     _fetchMapBytes();
@@ -335,28 +331,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         child: Container(
           margin: const EdgeInsets.only(top: 40, left: 16, right: 16),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.9), // Glassy but readable
+            color: Colors.white.withOpacity(0.9),
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.1),
-                blurRadius: 15,
-                offset: const Offset(0, 5),
-              ),
+              BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 15, offset: const Offset(0, 5)),
             ],
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
             child: Row(
               children: [
-                // Floor Selector
                 PopupMenuButton<String>(
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.indigo.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
+                    decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
                     child: Row(
                       children: [
                         Text('L$currentFloor', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigo)),
@@ -365,33 +353,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     ),
                   ),
                   onSelected: _changeFloor,
-                  itemBuilder: (context) => ['1', '2', '3'].map((f) => PopupMenuItem(
-                    value: f,
-                    child: Text('Floor $f'),
-                  )).toList(),
+                  itemBuilder: (context) => ['1', '2', '3'].map((f) => PopupMenuItem(value: f, child: Text('Floor $f'))).toList(),
                 ),
                 const SizedBox(width: 8),
-
                 Expanded(
                   child: Autocomplete<Map<String, dynamic>>(
                     optionsBuilder: (textValue) {
                       if (_allLocations.isEmpty) return const Iterable<Map<String, dynamic>>.empty();
                       final query = textValue.text.toLowerCase();
-                      
-                      // Filter
                       final matches = _allLocations.where((loc) {
-                        return (loc['name'] as String).toLowerCase().contains(query);
+                        final name = loc['name'] as String;
+                        return name.toLowerCase().contains(query) && roomPositions.containsKey(name);
                       }).toList();
-                      
-                      // Sort: Current floor first
-                      matches.sort((a, b) {
-                        final aFloor = a['floor']?.toString() ?? '1';
-                        final bFloor = b['floor']?.toString() ?? '1';
-                        if (aFloor == currentFloor && bFloor != currentFloor) return -1;
-                        if (aFloor != currentFloor && bFloor == currentFloor) return 1;
-                        return 0;
-                      });
-                      
+                      matches.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
                       return matches.cast<Map<String, dynamic>>();
                     },
                     displayStringForOption: (option) => option['name'],
@@ -410,22 +384,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                              itemCount: options.length,
                              separatorBuilder: (ctx, idx) => const Divider(height: 1),
                              itemBuilder: (BuildContext context, int index) {
-                               final option = options.elementAt(index);
-                               final floor = option['floor']?.toString() ?? '1';
-                               return ListTile(
-                                 dense: true,
-                                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
-                                 leading: const Icon(Icons.location_on, color: Colors.indigo),
-                                 title: Text(option['name'], style: const TextStyle(fontWeight: FontWeight.w500)),
-                                 subtitle: Text('Floor $floor', style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                                 trailing: Chip(
-                                   label: Text(floor, style: const TextStyle(fontSize: 10, color: Colors.white)),
-                                   backgroundColor: floor == currentFloor ? Colors.indigo : Colors.grey,
-                                   padding: EdgeInsets.zero,
-                                   visualDensity: VisualDensity.compact,
-                                 ),
-                                 onTap: () => onSelected(option),
-                               );
+                                final option = options.elementAt(index);
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(option['name'], style: const TextStyle(fontWeight: FontWeight.w500)),
+                                  subtitle: Text('Floor ${option['floor']}', style: const TextStyle(fontSize: 10)),
+                                  onTap: () => onSelected(option),
+                                );
                              },
                            ),
                           ),
@@ -436,9 +401,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       final targetFloor = selection['floor']?.toString() ?? '1';
                       if (targetFloor != currentFloor) {
                          _changeFloor(targetFloor);
-                         // Delay animation slightly to let map load
                          Future.delayed(const Duration(milliseconds: 500), () {
-                            // Find new position for this location name
                             if (roomPositions.containsKey(selection['name'])) {
                                _animateToLocation(roomPositions[selection['name']]!);
                             }
@@ -448,39 +411,31 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                             _animateToLocation(roomPositions[selection['name']]!);
                          }
                       }
-                      setState(() => selectedDestination = selection['name']);
+                      setState(() {
+                        selectedDestination = selection['name'];
+                        _shortestPath = [];
+                      });
                       _destMarkerController.forward(from: 0.7);
                     },
                     fieldViewBuilder: (ctx, ctrl, fnode, onSubmit) {
                       return TextField(
                         controller: ctrl,
                         focusNode: fnode,
-                        style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16),
-                        decoration: const InputDecoration(
-                          hintText: 'Search...',
-                          hintStyle: TextStyle(color: Colors.black45),
-                          prefixIcon: Icon(Icons.search, color: Colors.indigo),
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(vertical: 14),
-                        ),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        decoration: const InputDecoration(hintText: 'Search...', border: InputBorder.none, prefixIcon: Icon(Icons.search, color: Colors.indigo)),
                       );
                     },
                   ),
                 ),
-                Container(
-                  width: 1, 
-                  height: 24, 
-                  color: Colors.grey.shade300,
-                  margin: const EdgeInsets.symmetric(horizontal: 8),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.settings, color: Colors.indigo),
-                  tooltip: "Admin Panel",
-                  onPressed: () async {
-                    await Navigator.pushNamed(context, '/admin');
-                    _loadFloorData();
-                  },
-                ),
+                if (Provider.of<AppState>(context, listen: false).isAdmin) ...[
+                  IconButton(
+                    icon: const Icon(Icons.settings, color: Colors.indigo),
+                    onPressed: () async {
+                      await Navigator.pushNamed(context, '/admin_panel');
+                      _loadFloorData();
+                    },
+                  ),
+                ],
               ],
             ),
           ),
@@ -488,20 +443,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       floatingActionButton: Padding(
-        padding: const EdgeInsets.only(bottom: 110.0), // Lift buttons above the info card
+        padding: const EdgeInsets.only(bottom: 110.0),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            FloatingActionButton.extended(
+            FloatingActionButton(
               heroTag: "locate",
-              backgroundColor: Colors.indigo,
+              backgroundColor: _wifiDisabled ? Colors.grey : Colors.indigo,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              icon: const Icon(Icons.my_location, color: Colors.white),
-              label: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12.0),
-                child: Text('Locate Me', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-              ),
+              child: Icon(_wifiDisabled ? Icons.signal_wifi_off : Icons.my_location, color: Colors.white),
               onPressed: () {
                  _locateUser();
                  if (predictedRoom.isNotEmpty && roomPositions.containsKey(predictedRoom)) {
@@ -516,178 +467,165 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               icon: Icon(_isTesting ? Icons.stop : Icons.play_arrow),
-              label: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12.0),
-                child: Text(_isTesting ? 'Stop Test' : 'Test Random', style: const TextStyle(fontWeight: FontWeight.bold)),
-              ),
+              label: Text(_isTesting ? 'Stop Test' : 'Test Random'),
               onPressed: _toggleTesting,
             ),
           ],
         ),
       ),
       body: Container(
-        color: const Color(0xFFF0F2F5), // Light grey background
+        color: const Color(0xFFF0F2F5),
         child: Stack(
           children: [
             InteractiveViewer(
               transformationController: _transformationController,
-              minScale: 0.01,
+              minScale: 0.1,
               maxScale: 4.0,
               constrained: false,
-              boundaryMargin: const EdgeInsets.all(500), // Allow panning far out
+              boundaryMargin: const EdgeInsets.all(1000),
               child: Stack(
                 children: [
-                  // The Map Image
-              // The Map Image
-              if (_mapImageBytes != null)
-                 Image.memory(
-                    _mapImageBytes!,
-                    fit: BoxFit.none,
-                    errorBuilder: (ctx, err, st) => const Center(child: Text('Failed to perform image render')),
-                 )
-              else 
-                 SizedBox(
-                   width: MediaQuery.of(context).size.width,
-                   height: MediaQuery.of(context).size.height,
-                   child: Center(
-                     child: _isLoading 
-                        ? const CircularProgressIndicator()
-                        : Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                              const SizedBox(height: 16),
-                              Text(_errorMessage ?? 'Unknown Error', style: const TextStyle(color: Colors.red)),
-                              const SizedBox(height: 16),
-                              ElevatedButton(
-                                onPressed: _fetchMapBytes, 
-                                child: const Text('Retry')
-                              )
-                            ],
-                          ),
-                   ),
-                 ),
+                  if (_mapImageBytes != null)
+                    Image.memory(_mapImageBytes!, fit: BoxFit.none)
+                  else
+                    const SizedBox(width: 2000, height: 2000),
                   
-                  // User Marker
-                  if (predictedRoom.isNotEmpty && roomPositions.containsKey(predictedRoom))
-                     AnimatedBuilder(
-                        animation: _userMarkerController,
-                        builder: (ctx, child) {
-                          final pos = roomPositions[predictedRoom]!;
-                          return Positioned(
-                            left: pos.dx - 24, 
-                            top: pos.dy - 48,
-                            child: Transform.scale(
-                              scale: _userMarkerController.value, 
-                              alignment: Alignment.bottomCenter,
-                              child: InkWell(
-                                onTap: () => Fluttertoast.showToast(msg: "You are here: $predictedRoom"),
-                                child: const Icon(Icons.person_pin_circle, color: Colors.blueAccent, size: 48),
-                              ),
-                            ),
-                          );
-                        },
+                  // All Marked Locations (Subtle Dots)
+                  ...roomPositions.entries.where((e) => e.key != predictedRoom && e.key != selectedDestination).map((entry) {
+                    return Positioned(
+                      left: entry.value.dx - 4,
+                      top: entry.value.dy - 4,
+                      child: Container(
+                        width: 8, height: 8,
+                        decoration: BoxDecoration(
+                          color: Colors.indigo.withOpacity(0.4),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
+                        ),
                       ),
-                
-                  // Destination Marker
-                  if (selectedDestination.isNotEmpty && roomPositions.containsKey(selectedDestination))
-                     AnimatedBuilder(
-                        animation: _destMarkerController,
-                        builder: (ctx, child) {
-                          final pos = roomPositions[selectedDestination]!;
-                          return Positioned(
-                            left: pos.dx - 24, 
-                            top: pos.dy - 48,
-                            child: Transform.scale(
-                              scale: _destMarkerController.value,
-                              alignment: Alignment.bottomCenter,
-                              child: const Icon(Icons.flag, color: Colors.redAccent, size: 48),
-                            ),
-                          );
-                        },
-                      ),
+                    );
+                  }).toList(),
 
-                   // Path
-                   if (selectedDestination.isNotEmpty && roomPositions.containsKey(predictedRoom) && roomPositions.containsKey(selectedDestination))
-                      CustomPaint(
-                        size: Size.infinite, 
-                        painter: PathPainter(start: roomPositions[predictedRoom]!, end: roomPositions[selectedDestination]!),
-                      ),
+                  if (predictedRoom.isNotEmpty && roomPositions.containsKey(predictedRoom))
+                    AnimatedBuilder(
+                      animation: _userMarkerController,
+                      builder: (ctx, child) {
+                        final pos = roomPositions[predictedRoom]!;
+                        return Positioned(
+                          left: pos.dx - 24, top: pos.dy - 48,
+                          child: Transform.scale(scale: _userMarkerController.value, alignment: Alignment.bottomCenter, child: const Icon(Icons.person_pin_circle, color: Colors.blueAccent, size: 48)),
+                        );
+                      },
+                    ),
+
+                  if (selectedDestination.isNotEmpty && roomPositions.containsKey(selectedDestination))
+                    AnimatedBuilder(
+                      animation: _destMarkerController,
+                      builder: (ctx, child) {
+                        final pos = roomPositions[selectedDestination]!;
+                        return Positioned(
+                          left: pos.dx - 24, top: pos.dy - 48,
+                          child: Transform.scale(scale: _destMarkerController.value, alignment: Alignment.bottomCenter, child: const Icon(Icons.flag, color: Colors.redAccent, size: 48)),
+                        );
+                      },
+                    ),
+
+                  if (_shortestPath.isNotEmpty)
+                    CustomPaint(size: Size.infinite, painter: PathPainter(_shortestPath))
+                  else if (selectedDestination.isNotEmpty && roomPositions.containsKey(predictedRoom) && roomPositions.containsKey(selectedDestination))
+                    CustomPaint(size: Size.infinite, painter: SimplePathPainter(start: roomPositions[predictedRoom]!, end: roomPositions[selectedDestination]!)),
                 ],
               ),
             ),
-            
-            // Info Card Overlay
             Positioned(
-              left: 16, right: 16, bottom: 75, // Lifted for better visibility
+              left: 16, right: 16, bottom: 75,
               child: Container(
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.95),
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 12)],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                decoration: BoxDecoration(color: Colors.white.withOpacity(0.95), borderRadius: BorderRadius.circular(24), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 12)]),
+                child: Row(
                   children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.location_on, color: Colors.indigo, size: 20),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _isLocating 
-                            ? Row(
-                                children: [
-                                  const Text('Locating...', style: TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold)),
-                                  const SizedBox(width: 8),
-                                  const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
-                                ],
-                              )
-                            : Text('Current Location: ${predictedRoom.isEmpty ? 'Unknown' : predictedRoom}', style: const TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold)),
-                        ),
-                      ],
-                    ),
-                    if (selectedDestination.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          const Icon(Icons.flag, color: Colors.orange, size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(child: Text('Destination: $selectedDestination', style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.bold))),
-                        ],
-                      ),
-                    ],
+                    const Icon(Icons.location_on, color: Colors.indigo, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text('Current Location: ${predictedRoom.isEmpty ? 'Unknown' : predictedRoom}', style: const TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold))),
                   ],
                 ),
               ),
+            ),
+            if (selectedDestination.isNotEmpty) _buildDirectionsBanner(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDirectionsBanner() {
+    return Positioned(
+      bottom: 24, left: 16, right: 16,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 20, offset: const Offset(0, 10))]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                CircleAvatar(backgroundColor: Colors.indigo.withOpacity(0.1), child: const Icon(Icons.location_on, color: Colors.indigo)),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(selectedDestination, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      Text("Floor $currentFloor", style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                    ],
+                  ),
+                ),
+                IconButton(onPressed: () => setState(() { selectedDestination = ''; _shortestPath = []; }), icon: const Icon(Icons.close)),
+              ],
+            ),
+            const Divider(),
+            Row(
+              children: [
+                Expanded(child: OutlinedButton(onPressed: () {}, child: const Text("Info"))),
+                const SizedBox(width: 12),
+                Expanded(flex: 2, child: ElevatedButton.icon(onPressed: _getDirections, icon: const Icon(Icons.directions, color: Colors.white), label: const Text("Get Directions"), style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white))),
+              ],
             ),
           ],
         ),
       ),
     );
   }
+
+  void _getDirections() {
+    if (predictedRoom.isEmpty || selectedDestination.isEmpty) return;
+    _navigationService.initGraph(roomPositions);
+    final path = _navigationService.findShortestPath(predictedRoom, selectedDestination);
+    if (path.isNotEmpty) {
+      setState(() => _shortestPath = path);
+      Fluttertoast.showToast(msg: "Calculating shortest route...", backgroundColor: Colors.indigo, textColor: Colors.white);
+    } else {
+      Fluttertoast.showToast(msg: "No path found between locations");
+    }
+  }
 }
 
 class PathPainter extends CustomPainter {
-  final Offset start;
-  final Offset end;
-  PathPainter({required this.start, required this.end});
+  final List<Offset> points;
+  PathPainter(this.points);
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.blue
-      ..strokeWidth = 3
-      ..style = PaintingStyle.stroke
-      ..strokeCap = StrokeCap.round;
-
+    if (points.length < 2) return;
+    final paint = Paint()..color = Colors.indigo..strokeWidth = 6..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
     final path = Path();
-    path.moveTo(start.dx, start.dy);
-    path.lineTo(end.dx, end.dy);
-    
-    const dashWidth = 8.0;
-    const dashSpace = 4.0;
-    
+    path.moveTo(points[0].dx, points[0].dy);
+    for (int i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
+    }
+    final shadowPaint = Paint()..color = Colors.indigo.withOpacity(0.3)..strokeWidth = 10..style = PaintingStyle.stroke..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+    canvas.drawPath(path, shadowPaint);
+    const dashWidth = 8.0, dashSpace = 4.0;
     final metrics = path.computeMetrics();
     for (var metric in metrics) {
       double distance = 0;
@@ -695,6 +633,30 @@ class PathPainter extends CustomPainter {
         final extract = metric.extractPath(distance, distance + dashWidth);
         canvas.drawPath(extract, paint);
         distance += dashWidth + dashSpace;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+class SimplePathPainter extends CustomPainter {
+  final Offset start;
+  final Offset end;
+  SimplePathPainter({required this.start, required this.end});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..color = Colors.grey.withOpacity(0.5)..strokeWidth = 2..style = PaintingStyle.stroke;
+    final path = Path()..moveTo(start.dx, start.dy)..lineTo(end.dx, end.dy);
+    final metrics = path.computeMetrics();
+    for (var metric in metrics) {
+      double distance = 0;
+      while (distance < metric.length) {
+        final extract = metric.extractPath(distance, distance + 5);
+        canvas.drawPath(extract, paint);
+        distance += 10;
       }
     }
   }

@@ -30,10 +30,9 @@ class IndoorNavigationApp extends StatelessWidget {
           useMaterial3: true,
           colorSchemeSeed: Colors.indigo,
         ),
-        home: const SplashScreen(),
+        home: const LoginScreen(),
         routes: {
           '/home': (_) => const MapScreen(),
-          '/admin': (_) => const LoginScreen(),
           '/admin_panel': (_) => const AdminScreen(),
           '/digitized': (_) => const DigitizedMapView(),
         },
