@@ -8,6 +8,7 @@ import 'db_helper.dart';
 import 'admin_screen.dart';
 import 'login_screen.dart';
 import 'digitized_map_view.dart';
+import 'training_data_screen.dart';
 
 
 void main() async {
@@ -35,6 +36,7 @@ class IndoorNavigationApp extends StatelessWidget {
           '/home': (_) => const MapScreen(),
           '/admin_panel': (_) => const AdminScreen(),
           '/digitized': (_) => const DigitizedMapView(),
+          '/training_data': (_) => const TrainingDataScreen(),
         },
       ),
     );

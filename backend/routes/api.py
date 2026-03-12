@@ -1,6 +1,8 @@
 from flask import Blueprint, request, jsonify, send_file
 from services.database import db, fs
 from services.model_service import model_service
+from services.auth_service import auth_service
+from services.training_service import training_service
 from utils.image_processing import process_map_image
 from utils.csv_handler import read_test_csv
 from bson import ObjectId
@@ -9,6 +11,41 @@ from io import BytesIO
 
 api_bp = Blueprint('api', __name__)
 
+# =====================
+# AUTH ROUTES
+# =====================
+@api_bp.route('/auth/login', methods=['POST'])
+def login():
+    """Authenticate a user (student or admin)."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+
+        username = data.get('username', '').strip().lower()
+        password = data.get('password', '').strip()
+
+        if not username or not password:
+            return jsonify({'error': 'Username and password required'}), 400
+
+        user = auth_service.authenticate(username, password)
+        if user:
+            print(f"✅ LOGIN: {user['display_name']} ({user['role']})", flush=True)
+            return jsonify({
+                'success': True,
+                'user': user
+            })
+        else:
+            return jsonify({'success': False, 'error': 'Invalid credentials'}), 401
+
+    except Exception as e:
+        print(f"❌ LOGIN ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# =====================
+# PREDICTION ROUTE
+# =====================
 @api_bp.route('/getlocation', methods=['POST'])
 def get_prediction():
     try:
@@ -53,7 +90,121 @@ def get_all_locations():
 def health():
     return jsonify({'status': 'ok'}), 200
 
-# --- Admin Routes ---
+
+# =====================
+# TRAINING DATA ROUTES
+# =====================
+@api_bp.route('/admin/training-data', methods=['POST'])
+def add_training_data():
+    """
+    Add new WiFi training data. Expects JSON:
+    {
+        "location": "Room Name",
+        "landmark": "Near something",
+        "floor": "ground floor",
+        "scans": [
+            {
+                "ssid": "KcN",
+                "bssid": "54:07:7d:40:74:88",
+                "frequency": 2462,
+                "bandwidth": 20,
+                "signal_strength": -48,
+                "estimated_distance": 2.43,
+                "capabilities": "[WPA2-PSK...]"
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+
+        location = data.get('location', '').strip()
+        landmark = data.get('landmark', '').strip()
+        floor = data.get('floor', '').strip()
+        scans = data.get('scans', [])
+
+        if not location:
+            return jsonify({'error': 'Location is required'}), 400
+        if not scans:
+            return jsonify({'error': 'At least one WiFi scan is required'}), 400
+
+        # Build CSV rows
+        rows = []
+        for scan in scans:
+            rows.append({
+                'SSID': scan.get('ssid', ''),
+                'Location': location,
+                'Landmark': landmark,
+                'Floor': floor,
+                'BSSID': scan.get('bssid', ''),
+                'Frequency (MHz)': scan.get('frequency', ''),
+                'Bandwidth (MHz)': scan.get('bandwidth', ''),
+                'Signal Strength dBm': scan.get('signal_strength', ''),
+                'Estimated Distance m': scan.get('estimated_distance', ''),
+                'Capabilities': scan.get('capabilities', '')
+            })
+
+        count = training_service.append_training_data(rows)
+        print(f"📝 TRAINING DATA: Added {count} rows for location '{location}'", flush=True)
+
+        # Trigger async retrain
+        training_service.retrain_async()
+
+        return jsonify({
+            'success': True,
+            'rows_added': count,
+            'message': f'{count} WiFi scans added for "{location}". Model retraining started.'
+        })
+
+    except Exception as e:
+        print(f"❌ TRAINING DATA ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/retrain', methods=['POST'])
+def retrain_model():
+    """Manually trigger model retraining."""
+    try:
+        training_service.retrain_async()
+        return jsonify({
+            'success': True,
+            'message': 'Model retraining started in background'
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/training-stats', methods=['GET'])
+def training_stats():
+    """Get stats about the training data."""
+    try:
+        import pandas as pd
+        import os
+
+        if not os.path.exists('train.csv'):
+            return jsonify({'error': 'No training data found'}), 404
+
+        df = pd.read_csv('train.csv')
+        locations = df['Location'].unique().tolist()
+        total_rows = len(df)
+        total_bssids = df['BSSID'].nunique()
+
+        return jsonify({
+            'total_rows': total_rows,
+            'total_locations': len(locations),
+            'total_bssids': total_bssids,
+            'locations': locations
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# =====================
+# ADMIN MAP ROUTES
+# =====================
 @api_bp.route('/admin/upload_map/<floor>', methods=['POST'])
 def upload_map(floor):
     if 'file' not in request.files:

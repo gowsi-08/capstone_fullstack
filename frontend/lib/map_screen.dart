@@ -429,6 +429,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 ),
                 if (Provider.of<AppState>(context, listen: false).isAdmin) ...[
                   IconButton(
+                    icon: const Icon(Icons.model_training, color: Colors.indigo),
+                    tooltip: 'WiFi Training Data',
+                    onPressed: () => Navigator.pushNamed(context, '/training_data'),
+                  ),
+                  IconButton(
                     icon: const Icon(Icons.settings, color: Colors.indigo),
                     onPressed: () async {
                       await Navigator.pushNamed(context, '/admin_panel');

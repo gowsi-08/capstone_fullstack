@@ -246,6 +246,11 @@ class _AdminScreenState extends State<AdminScreen> {
                      tooltip: 'View Digitized Structure',
                      onPressed: () => Navigator.pushNamed(context, '/digitized'),
                    ),
+                   IconButton(
+                     icon: const Icon(Icons.model_training),
+                     tooltip: 'WiFi Training Data',
+                     onPressed: () => Navigator.pushNamed(context, '/training_data'),
+                   ),
               ],
             ),
           ),
