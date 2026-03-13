@@ -1,6 +1,7 @@
 import joblib
 import pandas as pd
 import os
+from services.database import db
 
 class ModelService:
     def __init__(self):
@@ -11,13 +12,13 @@ class ModelService:
     def load_model(self):
         try:
             model_path = "wifi_model.pkl"
-            train_path = "train.csv"
-            
+
             if os.path.exists(model_path):
                 self.model = joblib.load(model_path)
-            
-            if os.path.exists(train_path):
-                df_train = pd.read_csv(train_path)
+
+            train_data = list(db.wifi_training_data.find({}, {'_id': 0, 'BSSID': 1}))
+            if train_data:
+                df_train = pd.DataFrame(train_data)
                 df_train['BSSID'] = df_train['BSSID'].astype(str).str.strip().str.lower()
                 self.all_bssids = sorted(df_train['BSSID'].unique())
             

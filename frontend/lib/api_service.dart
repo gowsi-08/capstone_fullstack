@@ -10,7 +10,7 @@ class ApiService {
 
   static String get baseUrl {
     // Set this to true to use the Render production backend
-    const bool useProduction = true; 
+    const bool useProduction = false; 
 
     if (useProduction) {
       return _productionUrl;
@@ -178,6 +178,46 @@ class ApiService {
       return resp.statusCode == 200;
     } catch (e) {
       print('Error triggering retrain: $e');
+      return false;
+    }
+  }
+
+  // ==================
+  // TRAINING LOCATIONS (unique from MongoDB)
+  // ==================
+  static Future<List<Map<String, dynamic>>> getTrainingLocations() async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/training-locations');
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(resp.body);
+        return data.map((e) => Map<String, dynamic>.from(e)).toList();
+      }
+    } catch (e) {
+      print('Error fetching training locations: $e');
+    }
+    return [];
+  }
+
+  // ==================
+  // ADD SINGLE MAP LOCATION
+  // ==================
+  static Future<bool> addMapLocation({
+    required String name,
+    required String floor,
+    required double x,
+    required double y,
+  }) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/location/add');
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'name': name, 'floor': floor, 'x': x, 'y': y}),
+      ).timeout(const Duration(seconds: 10));
+      return resp.statusCode == 200;
+    } catch (e) {
+      print('Error adding map location: $e');
       return false;
     }
   }

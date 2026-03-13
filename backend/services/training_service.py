@@ -1,12 +1,9 @@
-import csv
-import os
 import threading
 import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import LabelEncoder
+from services.database import db
 
-TRAIN_CSV = 'train.csv'
 MODEL_PATH = 'wifi_model.pkl'
 
 class TrainingService:
@@ -17,11 +14,11 @@ class TrainingService:
 
     def append_training_data(self, rows):
         """
-        Append rows to train.csv.
+        Insert rows into MongoDB wifi_training_data collection.
         Each row is a dict with keys: SSID, Location, Landmark, Floor, BSSID,
         Frequency (MHz), Bandwidth (MHz), Signal Strength dBm,
         Estimated Distance m, Capabilities
-        Returns the number of rows appended.
+        Returns the number of rows inserted.
         """
         if not rows:
             return 0
@@ -33,36 +30,23 @@ class TrainingService:
         ]
 
         with self._lock:
-            file_exists = os.path.exists(TRAIN_CSV) and os.path.getsize(TRAIN_CSV) > 0
-
-            with open(TRAIN_CSV, 'a', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames)
-
-                if not file_exists:
-                    writer.writeheader()
-
-                count = 0
-                for row in rows:
-                    clean_row = {}
-                    for key in fieldnames:
-                        clean_row[key] = row.get(key, '')
-                    writer.writerow(clean_row)
-                    count += 1
-
-            return count
+            db.wifi_training_data.insert_many(rows)
+            return len(rows)
 
     def retrain_model(self):
         """
-        Retrain the ML model from train.csv and save it.
+        Retrain the ML model from MongoDB data and save it.
         This is run in a background thread after new data is appended.
         Returns (success, message).
         """
         try:
-            if not os.path.exists(TRAIN_CSV):
-                return False, 'train.csv not found'
-
-            print("🔄 RETRAINING: Loading training data...", flush=True)
-            df = pd.read_csv(TRAIN_CSV)
+            print("🔄 RETRAINING: Loading training data from database...", flush=True)
+            data = list(db.wifi_training_data.find({}, {'_id': 0}))
+            
+            if not data:
+                return False, 'No training data found in database'
+                
+            df = pd.DataFrame(data)
 
             if df.empty or 'BSSID' not in df.columns or 'Location' not in df.columns:
                 return False, 'Invalid training data format'

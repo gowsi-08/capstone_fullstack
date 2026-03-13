@@ -4,7 +4,6 @@ from services.model_service import model_service
 from services.auth_service import auth_service
 from services.training_service import training_service
 from utils.image_processing import process_map_image
-from utils.csv_handler import read_test_csv
 from bson import ObjectId
 import base64
 from io import BytesIO
@@ -131,7 +130,7 @@ def add_training_data():
         if not scans:
             return jsonify({'error': 'At least one WiFi scan is required'}), 400
 
-        # Build CSV rows
+        # Build MongoDB documents
         rows = []
         for scan in scans:
             rows.append({
@@ -182,15 +181,15 @@ def training_stats():
     """Get stats about the training data."""
     try:
         import pandas as pd
-        import os
 
-        if not os.path.exists('train.csv'):
-            return jsonify({'error': 'No training data found'}), 404
+        data = list(db.wifi_training_data.find({}, {'_id': 0}))
+        if not data:
+            return jsonify({'error': 'No training data found in database'}), 404
 
-        df = pd.read_csv('train.csv')
-        locations = df['Location'].unique().tolist()
+        df = pd.DataFrame(data)
+        locations = df['Location'].unique().tolist() if 'Location' in df.columns else []
         total_rows = len(df)
-        total_bssids = df['BSSID'].nunique()
+        total_bssids = df['BSSID'].nunique() if 'BSSID' in df.columns else 0
 
         return jsonify({
             'total_rows': total_rows,
@@ -279,9 +278,69 @@ def delete_location(loc_id):
 @api_bp.route('/admin/testdata', methods=['GET'])
 def get_test_data():
     try:
-        rows = read_test_csv('test.csv')
+        rows = list(db.wifi_test_data.find({}, {'_id': 0}))
+        if not rows:
+            return jsonify({'error': 'No test data found in database'}), 404
         return jsonify(rows)
-    except FileNotFoundError:
-        return jsonify({'error': 'test.csv not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/training-locations', methods=['GET'])
+def get_training_locations():
+    """Get unique locations from training data with sample counts."""
+    try:
+        pipeline = [
+            {'$group': {
+                '_id': '$Location',
+                'landmark': {'$first': '$Landmark'},
+                'floor': {'$first': '$Floor'},
+                'count': {'$sum': 1}
+            }},
+            {'$sort': {'_id': 1}}
+        ]
+        results = list(db.wifi_training_data.aggregate(pipeline))
+        locations = []
+        for r in results:
+            if r['_id']:
+                locations.append({
+                    'name': r['_id'],
+                    'landmark': r.get('landmark', ''),
+                    'floor': r.get('floor', ''),
+                    'sample_count': r['count']
+                })
+        return jsonify(locations)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/location/add', methods=['POST'])
+def add_single_location():
+    """Add or update a single location marker on the map."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+
+        name = data.get('name', '').strip()
+        floor = data.get('floor', '1')
+        x = data.get('x', 0)
+        y = data.get('y', 0)
+
+        if not name:
+            return jsonify({'error': 'Location name is required'}), 400
+
+        existing = db.locations.find_one({'name': name, 'floor': floor})
+        if existing:
+            db.locations.update_one(
+                {'_id': existing['_id']},
+                {'$set': {'x': x, 'y': y}}
+            )
+            return jsonify({'success': True, 'action': 'updated', 'id': str(existing['_id'])})
+
+        result = db.locations.insert_one({
+            'floor': floor, 'name': name, 'x': x, 'y': y
+        })
+        return jsonify({'success': True, 'action': 'created', 'id': str(result.inserted_id)})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
