@@ -322,6 +322,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _fetchMapBytes();
   }
 
+  void _handleLogout() async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    await appState.logout();
+    if (!mounted) return;
+    Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -441,6 +448,42 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     },
                   ),
                 ],
+                // User menu with logout
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.account_circle, color: Colors.indigo, size: 28),
+                  tooltip: 'Account',
+                  onSelected: (value) {
+                    if (value == 'logout') {
+                      _handleLogout();
+                    }
+                  },
+                  itemBuilder: (context) {
+                    final appState = Provider.of<AppState>(context, listen: false);
+                    return [
+                      PopupMenuItem(
+                        enabled: false,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(appState.userType, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
+                            Text(appState.isAdmin ? 'Admin' : 'Student', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          ],
+                        ),
+                      ),
+                      const PopupMenuDivider(),
+                      const PopupMenuItem(
+                        value: 'logout',
+                        child: Row(
+                          children: [
+                            Icon(Icons.logout, color: Colors.redAccent, size: 20),
+                            SizedBox(width: 8),
+                            Text('Logout', style: TextStyle(color: Colors.redAccent)),
+                          ],
+                        ),
+                      ),
+                    ];
+                  },
+                ),
               ],
             ),
           ),
