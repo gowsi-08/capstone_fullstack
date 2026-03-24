@@ -12,7 +12,7 @@ class TrainingDataScreen extends StatefulWidget {
   State<TrainingDataScreen> createState() => _TrainingDataScreenState();
 }
 
-class _TrainingDataScreenState extends State<TrainingDataScreen> {
+class _TrainingDataScreenState extends State<TrainingDataScreen> with SingleTickerProviderStateMixin {
   final _locationController = TextEditingController();
   final _landmarkController = TextEditingController();
   final _floorController = TextEditingController(text: 'ground floor');
@@ -22,12 +22,19 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
   bool _isSubmitting = false;
   Map<String, dynamic>? _trainingStats;
 
-  // Track which scans are selected for submission
   List<bool> _selectedScans = [];
+
+  late AnimationController _statsAnimController;
+  late Animation<double> _statsAnimation;
 
   @override
   void initState() {
     super.initState();
+    _statsAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _statsAnimation = CurvedAnimation(parent: _statsAnimController, curve: Curves.easeOutCubic);
     _loadTrainingStats();
   }
 
@@ -36,6 +43,7 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
     _locationController.dispose();
     _landmarkController.dispose();
     _floorController.dispose();
+    _statsAnimController.dispose();
     super.dispose();
   }
 
@@ -43,6 +51,7 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
     final stats = await ApiService.getTrainingStats();
     if (mounted) {
       setState(() => _trainingStats = stats);
+      _statsAnimController.forward(from: 0);
     }
   }
 
@@ -50,7 +59,6 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
     setState(() => _isScanning = true);
 
     try {
-      // Request permissions
       var locPermission = await Permission.location.request();
       if (!locPermission.isGranted) {
         if (mounted) {
@@ -76,11 +84,8 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
         return;
       }
 
-      // Convert scan results to our format
       final networks = results.map((ap) {
-        // Estimate distance from signal strength using the log-distance path loss model
         double estimatedDistance = _estimateDistance(ap.level, ap.frequency);
-
         return {
           'ssid': ap.ssid.isNotEmpty ? ap.ssid : 'Hidden',
           'bssid': ap.bssid,
@@ -93,7 +98,6 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
         };
       }).toList();
 
-      // Sort by signal strength (strongest first)
       networks.sort((a, b) => (b['signal_strength'] as int).compareTo(a['signal_strength'] as int));
 
       setState(() {
@@ -115,7 +119,6 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
   }
 
   double _estimateDistance(int signalStrengthDbm, int frequencyMhz) {
-    // Free-space path loss model
     double exp = (27.55 - (20 * log(frequencyMhz.toDouble()) / ln10) + signalStrengthDbm.abs().toDouble()) / 20.0;
     return pow(10, exp).toDouble();
   }
@@ -129,13 +132,11 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
       Fluttertoast.showToast(msg: '⚠️ Please enter a location name');
       return;
     }
-
     if (_scannedNetworks.isEmpty) {
       Fluttertoast.showToast(msg: '⚠️ Please scan WiFi first');
       return;
     }
 
-    // Filter only selected scans
     final selectedScans = <Map<String, dynamic>>[];
     for (int i = 0; i < _scannedNetworks.length; i++) {
       if (_selectedScans[i]) {
@@ -168,9 +169,7 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
         textColor: Colors.white,
         toastLength: Toast.LENGTH_LONG,
       );
-      // Refresh stats
       _loadTrainingStats();
-      // Clear scanned data for next entry
       setState(() {
         _scannedNetworks = [];
         _selectedScans = [];
@@ -192,11 +191,10 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
+      backgroundColor: const Color(0xFFF0F2F5),
       appBar: AppBar(
-        title: const Text('WiFi Training Data'),
+        title: const Text('WiFi Training Data', style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.3)),
         backgroundColor: Colors.indigo,
         foregroundColor: Colors.white,
         elevation: 0,
@@ -208,268 +206,272 @@ class _TrainingDataScreenState extends State<TrainingDataScreen> {
           ),
         ],
       ),
-      body: Container(
-        color: const Color(0xFFF5F5F5),
-        child: Column(
-          children: [
-            // Stats Banner
-            if (_trainingStats != null)
-              Container(
+      body: Column(
+        children: [
+          // ── Stats Banner ──
+          if (_trainingStats != null)
+            FadeTransition(
+              opacity: _statsAnimation,
+              child: Container(
                 width: double.infinity,
-                margin: const EdgeInsets.all(16),
-                padding: const EdgeInsets.all(16),
+                margin: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Colors.indigo, Colors.indigoAccent],
+                  gradient: LinearGradient(
+                    colors: [Colors.indigo.shade700, Colors.indigo.shade500],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(20),
                   boxShadow: [
-                    BoxShadow(
-                      color: Colors.indigo.withOpacity(0.3),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
+                    BoxShadow(color: Colors.indigo.withAlpha(60), blurRadius: 16, offset: const Offset(0, 6)),
                   ],
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    _statItem('Samples', '${_trainingStats!["total_rows"] ?? 0}', Icons.dataset),
-                    _statItem('Locations', '${_trainingStats!["total_locations"] ?? 0}', Icons.location_on),
+                    _statItem('Samples', '${_trainingStats!["total_rows"] ?? 0}', Icons.dataset_outlined),
+                    Container(width: 1, height: 40, color: Colors.white24),
+                    _statItem('Locations', '${_trainingStats!["total_locations"] ?? 0}', Icons.location_on_outlined),
+                    Container(width: 1, height: 40, color: Colors.white24),
                     _statItem('BSSIDs', '${_trainingStats!["total_bssids"] ?? 0}', Icons.wifi),
                   ],
                 ),
               ),
+            ),
 
-            // Form
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Location Details Card
+          // ── Form ──
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 8),
+
+                  // Location Card
+                  Card(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    elevation: 0,
+                    color: Colors.white,
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(Icons.edit_location_alt, color: Colors.indigo.shade600, size: 22),
+                              const SizedBox(width: 8),
+                              Text('Location Details', style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold, color: Colors.indigo.shade700)),
+                            ],
+                          ),
+                          const SizedBox(height: 20),
+                          _buildTextField(_locationController, 'Location Name *', 'e.g. cse department office', Icons.room),
+                          const SizedBox(height: 14),
+                          _buildTextField(_landmarkController, 'Nearby Landmark', 'e.g. near hod cabin', Icons.place),
+                          const SizedBox(height: 14),
+                          _buildTextField(_floorController, 'Floor', 'e.g. ground floor, second', Icons.layers),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Scan Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 54,
+                    child: ElevatedButton.icon(
+                      onPressed: _isScanning ? null : _scanWifi,
+                      icon: _isScanning
+                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.wifi_find, color: Colors.white, size: 22),
+                      label: Text(
+                        _isScanning ? 'Scanning...' : 'Scan WiFi Networks',
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.teal.shade600,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        elevation: 0,
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // ── Scanned Networks ──
+                  if (_scannedNetworks.isNotEmpty) ...[
                     Card(
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      elevation: 2,
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                      elevation: 0,
+                      color: Colors.white,
+                      child: Column(
+                        children: [
+                          // Header
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            decoration: BoxDecoration(
+                              color: Colors.teal.shade50,
+                              borderRadius: const BorderRadius.only(
+                                topLeft: Radius.circular(20),
+                                topRight: Radius.circular(20),
+                              ),
+                            ),
+                            child: Row(
                               children: [
-                                Icon(Icons.edit_location_alt, color: Colors.indigo[700]),
+                                Icon(Icons.wifi, color: Colors.teal.shade700, size: 20),
                                 const SizedBox(width: 8),
-                                Text('Location Details', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.indigo[700])),
+                                Text(
+                                  '${_scannedNetworks.length} Networks Found',
+                                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.teal.shade700),
+                                ),
+                                const Spacer(),
+                                _chipButton('All', () => _selectAll(true)),
+                                const SizedBox(width: 4),
+                                _chipButton('None', () => _selectAll(false)),
                               ],
                             ),
-                            const SizedBox(height: 16),
-                            TextField(
-                              controller: _locationController,
-                              decoration: InputDecoration(
-                                labelText: 'Location Name *',
-                                hintText: 'e.g. cse department office',
-                                prefixIcon: const Icon(Icons.room),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                filled: true,
-                                fillColor: Colors.grey[50],
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            TextField(
-                              controller: _landmarkController,
-                              decoration: InputDecoration(
-                                labelText: 'Nearby Landmark',
-                                hintText: 'e.g. near hod cabin',
-                                prefixIcon: const Icon(Icons.place),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                filled: true,
-                                fillColor: Colors.grey[50],
-                              ),
-                            ),
-                            const SizedBox(height: 12),
-                            TextField(
-                              controller: _floorController,
-                              decoration: InputDecoration(
-                                labelText: 'Floor',
-                                hintText: 'e.g. ground floor, second',
-                                prefixIcon: const Icon(Icons.layers),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                filled: true,
-                                fillColor: Colors.grey[50],
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                          // List
+                          ListView.separated(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: _scannedNetworks.length,
+                            separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade100),
+                            itemBuilder: (context, index) {
+                              final network = _scannedNetworks[index];
+                              final signal = network['signal_strength'] as int;
+                              final signalPercent = ((signal + 100) / 70 * 100).clamp(0, 100).toInt();
+
+                              return CheckboxListTile(
+                                dense: true,
+                                activeColor: Colors.teal,
+                                value: _selectedScans[index],
+                                onChanged: (val) {
+                                  setState(() => _selectedScans[index] = val ?? false);
+                                },
+                                secondary: _signalIcon(signal),
+                                title: Text(
+                                  network['ssid'] ?? 'Hidden',
+                                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      network['bssid'],
+                                      style: TextStyle(fontSize: 11, color: Colors.grey.shade500, fontFamily: 'monospace'),
+                                    ),
+                                    Row(
+                                      children: [
+                                        _metaChip('${network['frequency']}MHz'),
+                                        const SizedBox(width: 4),
+                                        _metaChip('${signal}dBm ($signalPercent%)'),
+                                        const SizedBox(width: 4),
+                                        _metaChip('~${network['estimated_distance']}m'),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                isThreeLine: true,
+                              );
+                            },
+                          ),
+                        ],
                       ),
                     ),
 
                     const SizedBox(height: 16),
 
-                    // Scan Button
+                    // Submit Button
                     SizedBox(
                       width: double.infinity,
-                      height: 56,
+                      height: 54,
                       child: ElevatedButton.icon(
-                        onPressed: _isScanning ? null : _scanWifi,
-                        icon: _isScanning
-                            ? const SizedBox(
-                                width: 20, height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              )
-                            : const Icon(Icons.wifi_find, color: Colors.white),
+                        onPressed: _isSubmitting ? null : _submitData,
+                        icon: _isSubmitting
+                            ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                            : const Icon(Icons.cloud_upload, color: Colors.white, size: 22),
                         label: Text(
-                          _isScanning ? 'Scanning...' : 'Scan WiFi Networks',
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          _isSubmitting ? 'Submitting & Retraining...' : 'Submit Data & Retrain Model',
+                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                         ),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.teal,
+                          backgroundColor: Colors.indigo,
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          elevation: 3,
+                          elevation: 0,
                         ),
                       ),
                     ),
-
-                    const SizedBox(height: 16),
-
-                    // Scanned Networks
-                    if (_scannedNetworks.isNotEmpty) ...[
-                      Card(
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        elevation: 2,
-                        child: Column(
-                          children: [
-                            // Header
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                              decoration: BoxDecoration(
-                                color: Colors.grey[100],
-                                borderRadius: const BorderRadius.only(
-                                  topLeft: Radius.circular(16),
-                                  topRight: Radius.circular(16),
-                                ),
-                              ),
-                              child: Row(
-                                children: [
-                                  Icon(Icons.wifi, color: Colors.indigo[600], size: 20),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'Found ${_scannedNetworks.length} Networks',
-                                    style: TextStyle(fontWeight: FontWeight.bold, color: Colors.indigo[700]),
-                                  ),
-                                  const Spacer(),
-                                  TextButton.icon(
-                                    icon: const Icon(Icons.select_all, size: 16),
-                                    label: const Text('All'),
-                                    onPressed: () => _selectAll(true),
-                                    style: TextButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                                      minimumSize: Size.zero,
-                                    ),
-                                  ),
-                                  TextButton.icon(
-                                    icon: const Icon(Icons.deselect, size: 16),
-                                    label: const Text('None'),
-                                    onPressed: () => _selectAll(false),
-                                    style: TextButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                                      minimumSize: Size.zero,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            // Network List
-                            ListView.separated(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: _scannedNetworks.length,
-                              separatorBuilder: (_, __) => const Divider(height: 1),
-                              itemBuilder: (context, index) {
-                                final network = _scannedNetworks[index];
-                                final signal = network['signal_strength'] as int;
-                                final signalPercent = ((signal + 100) / 70 * 100).clamp(0, 100).toInt();
-
-                                return CheckboxListTile(
-                                  dense: true,
-                                  value: _selectedScans[index],
-                                  onChanged: (val) {
-                                    setState(() => _selectedScans[index] = val ?? false);
-                                  },
-                                  secondary: _signalIcon(signal),
-                                  title: Text(
-                                    network['ssid'] ?? 'Hidden',
-                                    style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-                                  ),
-                                  subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'BSSID: ${network['bssid']}',
-                                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                                      ),
-                                      Text(
-                                        '${network['frequency']}MHz | ${signal}dBm ($signalPercent%) | ~${network['estimated_distance']}m',
-                                        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
-                                      ),
-                                    ],
-                                  ),
-                                  isThreeLine: true,
-                                );
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Submit Button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 56,
-                        child: ElevatedButton.icon(
-                          onPressed: _isSubmitting ? null : _submitData,
-                          icon: _isSubmitting
-                              ? const SizedBox(
-                                  width: 20, height: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                )
-                              : const Icon(Icons.cloud_upload, color: Colors.white),
-                          label: Text(
-                            _isSubmitting
-                                ? 'Submitting & Retraining...'
-                                : 'Submit Data & Retrain Model',
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.indigo,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                            elevation: 3,
-                          ),
-                        ),
-                      ),
-                    ],
-
-                    const SizedBox(height: 32),
                   ],
-                ),
+
+                  const SizedBox(height: 32),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildTextField(TextEditingController controller, String label, String hint, IconData icon) {
+    return TextField(
+      controller: controller,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        prefixIcon: Icon(icon, size: 20),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: BorderSide(color: Colors.grey.shade200),
+        ),
+        filled: true,
+        fillColor: const Color(0xFFF8F9FA),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      ),
+    );
+  }
+
+  Widget _chipButton(String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.teal.shade100,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.teal.shade800)),
+      ),
+    );
+  }
+
+  Widget _metaChip(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(text, style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
     );
   }
 
   Widget _statItem(String label, String value, IconData icon) {
     return Column(
       children: [
-        Icon(icon, color: Colors.white70, size: 20),
-        const SizedBox(height: 4),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+        Icon(icon, color: Colors.white70, size: 22),
+        const SizedBox(height: 6),
+        Text(value, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 2),
         Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
       ],
     );
