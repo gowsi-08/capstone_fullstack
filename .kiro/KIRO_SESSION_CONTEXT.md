@@ -27,30 +27,40 @@ This file contains essential context for AI assistants working on the FindMyWay 
 
 ### Training Data MongoDB Migration + Full CRUD (Current)
 **Date**: Current session
-**Status**: 🚧 In Progress
+**Status**: 🚧 In Progress - Tab 1 Complete
 
 **Changes**:
-1. Migrated CSV data (train.csv, test.csv) to MongoDB `training_data_records` collection
-2. Added comprehensive CRUD API endpoints for training data management
-3. Rebuilt Training Data screen with 3 tabs: Collect, Manage, Merge
-4. Rebuilt Floor Plan screen as image gallery with expand view
-5. Fixed mobile layout issues (removed sidebar on mobile, cards only)
+1. ✅ Migrated CSV data (train.csv, test.csv) to MongoDB `training_data_records` collection
+2. ✅ Added comprehensive CRUD API endpoints for training data management
+3. ✅ Rebuilt Training Data screen with 3-tab structure (All 3 tabs complete)
+4. ✅ Tab 1 (Collect), Tab 2 (Manage), Tab 3 (Merge) - all fully implemented
+5. ✅ Fixed mobile layout issues (removed sidebar on mobile, cards only)
+6. ✅ Added 13 new API methods to api_service.dart
 
 **New Backend**:
-- `backend/scripts/migrate_csv_to_mongo.py` - Migration script
-- New API endpoints in `routes/api.py`:
+- `backend/scripts/migrate_csv_to_mongo.py` - Migration script (ready to run)
+- New API endpoints in `routes/api.py` (15 endpoints added):
   - GET `/admin/training-records` - Paginated records
   - GET `/admin/training-records/grouped` - Grouped by location
+  - GET `/admin/training-records/locations` - Distinct locations
   - POST `/admin/training-records` - Add single record
   - POST `/admin/training-records/bulk` - Bulk insert
   - PUT `/admin/training-records/{id}` - Update record
+  - PUT `/admin/training-records/bulk` - Bulk update
   - DELETE `/admin/training-records/{id}` - Delete record
+  - DELETE `/admin/training-records/bulk` - Bulk delete
+  - DELETE `/admin/training-records/group/{location}` - Delete by group
   - POST `/admin/training-records/merge` - Merge locations
+  - GET `/admin/training-records/export` - Export CSV
 
 **New Frontend**:
-- Rebuilt `admin/training_data_screen.dart` with tabs
-- Rebuilt `admin/floor_plan_screen.dart` as gallery
-- Updated `api_service.dart` with new methods
+- ✅ Rebuilt `admin/training_data_screen.dart` with TabBar (3 tabs)
+  - Tab 1 (Collect): ✅ Complete - WiFi scanning preserved, new dark theme
+  - Tab 2 (Manage): ✅ Complete - Grouped/List views, filters, multi-select, bulk actions
+  - Tab 3 (Merge): ✅ Complete - Multi-select sources, target input, floor selector, merge tool
+- Old file backed up as `training_data_screen_old_backup.dart`
+- ✅ Updated `api_service.dart` with 13 new CRUD methods
+- ⏳ Need to rebuild `admin/floor_plan_screen.dart` as gallery
 
 ### Admin Dashboard Refactor (Previous)
 **Date**: Current session

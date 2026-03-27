@@ -179,26 +179,32 @@ def retrain_model():
 
 @api_bp.route('/admin/training-stats', methods=['GET'])
 def training_stats():
-    """Get stats about the training data."""
+    """Get stats about the training data from MongoDB."""
     try:
-        import pandas as pd
-        import os
-
-        if not os.path.exists('train.csv'):
-            return jsonify({'error': 'No training data found'}), 404
-
-        df = pd.read_csv('train.csv')
-        locations = df['Location'].unique().tolist()
-        total_rows = len(df)
-        total_bssids = df['BSSID'].nunique()
+        from services.database import get_db
+        
+        db = get_db()
+        training_collection = db['training_data']
+        
+        # Get total count
+        total_rows = training_collection.count_documents({})
+        
+        # Get unique locations
+        locations = training_collection.distinct('location')
+        total_locations = len(locations)
+        
+        # Get unique BSSIDs
+        bssids = training_collection.distinct('bssid')
+        total_bssids = len(bssids)
 
         return jsonify({
             'total_rows': total_rows,
-            'total_locations': len(locations),
+            'total_locations': total_locations,
             'total_bssids': total_bssids,
             'locations': locations
         })
     except Exception as e:
+        print(f"Error fetching training stats: {e}")
         return jsonify({'error': str(e)}), 500
 
 

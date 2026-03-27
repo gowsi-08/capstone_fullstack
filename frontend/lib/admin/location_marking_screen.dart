@@ -375,29 +375,31 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> {
                 ),
                 const Spacer(),
                 if (_locations.isNotEmpty)
-                  ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF00C853),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      elevation: 0,
+                  Flexible(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF00C853),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        elevation: 0,
+                      ),
+                      icon: _isSavingLocations
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.save, size: 18),
+                      label: Text(
+                        _isSavingLocations ? 'Saving...' : 'Save All',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                      ),
+                      onPressed: _isSavingLocations ? null : _saveLocations,
                     ),
-                    icon: _isSavingLocations
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.save, size: 20),
-                    label: Text(
-                      _isSavingLocations ? 'Saving...' : 'Save All',
-                      style: GoogleFonts.inter(fontWeight: FontWeight.bold),
-                    ),
-                    onPressed: _isSavingLocations ? null : _saveLocations,
                   ),
               ],
             ),

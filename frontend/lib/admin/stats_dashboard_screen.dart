@@ -141,36 +141,41 @@ class _StatsDashboardScreenState extends State<StatsDashboardScreen>
                       // Main Stats Grid
                       FadeTransition(
                         opacity: _animController,
-                        child: GridView.count(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          crossAxisCount: 3,
-                          crossAxisSpacing: 24,
-                          mainAxisSpacing: 24,
-                          childAspectRatio: 1.5,
-                          children: [
-                            _buildStatCard(
-                              'Total Samples',
-                              '${_trainingStats!["total_rows"] ?? 0}',
-                              Icons.dataset_outlined,
-                              const Color(0xFF2979FF),
-                              'WiFi fingerprint records',
-                            ),
-                            _buildStatCard(
-                              'Unique Locations',
-                              '${_trainingStats!["total_locations"] ?? 0}',
-                              Icons.location_on_outlined,
-                              const Color(0xFF00BCD4),
-                              'Mapped room positions',
-                            ),
-                            _buildStatCard(
-                              'WiFi BSSIDs',
-                              '${_trainingStats!["total_bssids"] ?? 0}',
-                              Icons.wifi,
-                              const Color(0xFF7C4DFF),
-                              'Unique access points',
-                            ),
-                          ],
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final crossAxisCount = constraints.maxWidth > 900 ? 3 : (constraints.maxWidth > 600 ? 2 : 1);
+                            return GridView.count(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              crossAxisCount: crossAxisCount,
+                              crossAxisSpacing: 16,
+                              mainAxisSpacing: 16,
+                              childAspectRatio: 1.5,
+                              children: [
+                                _buildStatCard(
+                                  'Total Samples',
+                                  '${_trainingStats!["total_rows"] ?? 0}',
+                                  Icons.dataset_outlined,
+                                  const Color(0xFF2979FF),
+                                  'WiFi fingerprint records',
+                                ),
+                                _buildStatCard(
+                                  'Unique Locations',
+                                  '${_trainingStats!["total_locations"] ?? 0}',
+                                  Icons.location_on_outlined,
+                                  const Color(0xFF00BCD4),
+                                  'Mapped room positions',
+                                ),
+                                _buildStatCard(
+                                  'WiFi BSSIDs',
+                                  '${_trainingStats!["total_bssids"] ?? 0}',
+                                  Icons.wifi,
+                                  const Color(0xFF7C4DFF),
+                                  'Unique access points',
+                                ),
+                              ],
+                            );
+                          },
                         ),
                       ),
 
@@ -181,85 +186,61 @@ class _StatsDashboardScreenState extends State<StatsDashboardScreen>
                         opacity: _animController,
                         child: Container(
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.2),
-                                blurRadius: 20,
-                                offset: const Offset(0, 10),
+                            color: const Color(0xFF132F4C),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.1),
+                              width: 1,
+                            ),
+                          ),
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.health_and_safety_outlined,
+                                    color: Color(0xFF00C853),
+                                    size: 24,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    'System Health',
+                                    style: GoogleFonts.outfit(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 20),
+                              Wrap(
+                                spacing: 12,
+                                runSpacing: 12,
+                                children: [
+                                  _healthIndicator(
+                                    'Model Status',
+                                    'Trained',
+                                    Icons.check_circle,
+                                    const Color(0xFF00C853),
+                                  ),
+                                  _healthIndicator(
+                                    'Data Quality',
+                                    _getDataQuality(),
+                                    Icons.analytics,
+                                    _getDataQualityColor(),
+                                  ),
+                                  _healthIndicator(
+                                    'Coverage',
+                                    '${_trainingStats!["total_locations"] ?? 0} Locations',
+                                    Icons.map_outlined,
+                                    const Color(0xFF2979FF),
+                                  ),
+                                ],
                               ),
                             ],
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(20),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.05),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Colors.white.withOpacity(0.1),
-                                    width: 1,
-                                  ),
-                                ),
-                                padding: const EdgeInsets.all(32),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        const Icon(
-                                          Icons.health_and_safety_outlined,
-                                          color: Color(0xFF00C853),
-                                          size: 28,
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Text(
-                                          'System Health',
-                                          style: GoogleFonts.outfit(
-                                            fontSize: 24,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 24),
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: _healthIndicator(
-                                            'Model Status',
-                                            'Trained',
-                                            Icons.check_circle,
-                                            const Color(0xFF00C853),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 16),
-                                        Expanded(
-                                          child: _healthIndicator(
-                                            'Data Quality',
-                                            _getDataQuality(),
-                                            Icons.analytics,
-                                            _getDataQualityColor(),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 16),
-                                        Expanded(
-                                          child: _healthIndicator(
-                                            'Coverage',
-                                            '${_trainingStats!["total_locations"] ?? 0} Locations',
-                                            Icons.map_outlined,
-                                            const Color(0xFF2979FF),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
                           ),
                         ),
                       ),
@@ -271,75 +252,57 @@ class _StatsDashboardScreenState extends State<StatsDashboardScreen>
                         opacity: _animController,
                         child: Container(
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.2),
-                                blurRadius: 20,
-                                offset: const Offset(0, 10),
+                            color: const Color(0xFF132F4C),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.1),
+                              width: 1,
+                            ),
+                          ),
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.pie_chart_outline,
+                                    color: Color(0xFF7C4DFF),
+                                    size: 24,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    'Data Distribution',
+                                    style: GoogleFonts.outfit(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 20),
+                              _distributionItem(
+                                'Average Samples per Location',
+                                _getAvgSamplesPerLocation(),
+                                Icons.trending_up,
+                                const Color(0xFF00BCD4),
+                              ),
+                              const SizedBox(height: 12),
+                              _distributionItem(
+                                'Average BSSIDs per Sample',
+                                _getAvgBSSIDsPerSample(),
+                                Icons.wifi_tethering,
+                                const Color(0xFF7C4DFF),
+                              ),
+                              const SizedBox(height: 12),
+                              _distributionItem(
+                                'Data Completeness',
+                                '${_getDataCompleteness()}%',
+                                Icons.check_circle_outline,
+                                const Color(0xFF00C853),
                               ),
                             ],
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(20),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.05),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Colors.white.withOpacity(0.1),
-                                    width: 1,
-                                  ),
-                                ),
-                                padding: const EdgeInsets.all(32),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        const Icon(
-                                          Icons.pie_chart_outline,
-                                          color: Color(0xFF7C4DFF),
-                                          size: 28,
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Text(
-                                          'Data Distribution',
-                                          style: GoogleFonts.outfit(
-                                            fontSize: 24,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 24),
-                                    _distributionItem(
-                                      'Average Samples per Location',
-                                      _getAvgSamplesPerLocation(),
-                                      Icons.trending_up,
-                                      const Color(0xFF00BCD4),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    _distributionItem(
-                                      'Average BSSIDs per Sample',
-                                      _getAvgBSSIDsPerSample(),
-                                      Icons.wifi_tethering,
-                                      const Color(0xFF7C4DFF),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    _distributionItem(
-                                      'Data Completeness',
-                                      '${_getDataCompleteness()}%',
-                                      Icons.check_circle_outline,
-                                      const Color(0xFF00C853),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
                           ),
                         ),
                       ),
@@ -351,56 +314,38 @@ class _StatsDashboardScreenState extends State<StatsDashboardScreen>
                         opacity: _animController,
                         child: Container(
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(20),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.2),
-                                blurRadius: 20,
-                                offset: const Offset(0, 10),
-                              ),
-                            ],
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(20),
-                            child: BackdropFilter(
-                              filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.05),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Colors.white.withOpacity(0.1),
-                                    width: 1,
-                                  ),
-                                ),
-                                padding: const EdgeInsets.all(32),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        const Icon(
-                                          Icons.lightbulb_outline,
-                                          color: Color(0xFFFF6D00),
-                                          size: 28,
-                                        ),
-                                        const SizedBox(width: 12),
-                                        Text(
-                                          'Recommendations',
-                                          style: GoogleFonts.outfit(
-                                            fontSize: 24,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.white,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 24),
-                                    ..._getRecommendations().map((rec) => _recommendationItem(rec)),
-                                  ],
-                                ),
-                              ),
+                            color: const Color(0xFF132F4C),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: Colors.white.withOpacity(0.1),
+                              width: 1,
                             ),
+                          ),
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(
+                                    Icons.lightbulb_outline,
+                                    color: Color(0xFFFF6D00),
+                                    size: 24,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    'Recommendations',
+                                    style: GoogleFonts.outfit(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 20),
+                              ..._getRecommendations().map((rec) => _recommendationItem(rec)),
+                            ],
                           ),
                         ),
                       ),
@@ -414,75 +359,50 @@ class _StatsDashboardScreenState extends State<StatsDashboardScreen>
       String label, String value, IconData icon, Color color, String subtitle) {
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: color.withOpacity(0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 10),
+        color: const Color(0xFF132F4C),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: color.withOpacity(0.3),
+          width: 1,
+        ),
+      ),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Icon(icon, color: color, size: 36),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                value,
+                style: GoogleFonts.outfit(
+                  fontSize: 32,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  color: Colors.white60,
+                ),
+              ),
+            ],
           ),
         ],
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  color.withOpacity(0.2),
-                  color.withOpacity(0.05),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: color.withOpacity(0.3),
-                width: 1.5,
-              ),
-            ),
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Icon(icon, color: color, size: 40),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      value,
-                      style: GoogleFonts.outfit(
-                        fontSize: 36,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      label,
-                      style: GoogleFonts.inter(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: GoogleFonts.inter(
-                        fontSize: 11,
-                        color: Colors.white60,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

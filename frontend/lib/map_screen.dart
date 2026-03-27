@@ -338,11 +338,12 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         child: Container(
           margin: const EdgeInsets.only(top: 40, left: 16, right: 16),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.9),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 15, offset: const Offset(0, 5)),
-            ],
+            color: const Color(0xFF132F4C),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.1),
+              width: 1,
+            ),
           ),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -351,11 +352,18 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 PopupMenuButton<String>(
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(color: Colors.indigo.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2979FF).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF2979FF).withOpacity(0.3),
+                        width: 1,
+                      ),
+                    ),
                     child: Row(
                       children: [
-                        Text('L$currentFloor', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.indigo)),
-                        const Icon(Icons.arrow_drop_down, color: Colors.indigo),
+                        Text('L$currentFloor', style: const TextStyle(fontWeight: FontWeight.w600, color: Color(0xFF2979FF))),
+                        const Icon(Icons.arrow_drop_down, color: Color(0xFF2979FF)),
                       ],
                     ),
                   ),
@@ -381,21 +389,21 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         alignment: Alignment.topLeft,
                         child: Material(
                           elevation: 8,
-                          borderRadius: BorderRadius.circular(16),
-                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          color: const Color(0xFF132F4C),
                           child: ConstrainedBox(
                            constraints: const BoxConstraints(maxHeight: 300, maxWidth: 300), 
                            child: ListView.separated(
                              padding: EdgeInsets.zero,
                              shrinkWrap: true,
                              itemCount: options.length,
-                             separatorBuilder: (ctx, idx) => const Divider(height: 1),
+                             separatorBuilder: (ctx, idx) => Divider(height: 1, color: Colors.white.withOpacity(0.1)),
                              itemBuilder: (BuildContext context, int index) {
                                 final option = options.elementAt(index);
                                 return ListTile(
                                   dense: true,
-                                  title: Text(option['name'], style: const TextStyle(fontWeight: FontWeight.w500)),
-                                  subtitle: Text('Floor ${option['floor']}', style: const TextStyle(fontSize: 10)),
+                                  title: Text(option['name'], style: const TextStyle(fontWeight: FontWeight.w500, color: Colors.white)),
+                                  subtitle: Text('Floor ${option['floor']}', style: TextStyle(fontSize: 10, color: Colors.white.withOpacity(0.6))),
                                   onTap: () => onSelected(option),
                                 );
                              },
@@ -428,20 +436,25 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       return TextField(
                         controller: ctrl,
                         focusNode: fnode,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                        decoration: const InputDecoration(hintText: 'Search...', border: InputBorder.none, prefixIcon: Icon(Icons.search, color: Colors.indigo)),
+                        style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white),
+                        decoration: InputDecoration(
+                          hintText: 'Search locations...',
+                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
+                          border: InputBorder.none,
+                          prefixIcon: const Icon(Icons.search, color: Color(0xFF2979FF)),
+                        ),
                       );
                     },
                   ),
                 ),
                 if (Provider.of<AppState>(context, listen: false).isAdmin) ...[
                   IconButton(
-                    icon: const Icon(Icons.model_training, color: Colors.indigo),
+                    icon: const Icon(Icons.model_training, color: Color(0xFF7C4DFF)),
                     tooltip: 'WiFi Training Data',
                     onPressed: () => Navigator.pushNamed(context, '/training_data'),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.settings, color: Colors.indigo),
+                    icon: const Icon(Icons.settings, color: Color(0xFF00BCD4)),
                     onPressed: () async {
                       await Navigator.pushNamed(context, '/admin_dashboard');
                       _loadFloorData();
@@ -450,7 +463,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 ],
                 // User menu with logout
                 PopupMenuButton<String>(
-                  icon: const Icon(Icons.account_circle, color: Colors.indigo, size: 28),
+                  icon: const Icon(Icons.account_circle, color: Colors.white, size: 28),
                   tooltip: 'Account',
                   onSelected: (value) {
                     if (value == 'logout') {
@@ -498,7 +511,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           children: [
             FloatingActionButton(
               heroTag: "locate",
-              backgroundColor: _wifiDisabled ? Colors.grey : Colors.indigo,
+              backgroundColor: _wifiDisabled ? Colors.grey : const Color(0xFF2979FF),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               child: Icon(_wifiDisabled ? Icons.signal_wifi_off : Icons.my_location, color: Colors.white),
               onPressed: () {
@@ -511,7 +524,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             const SizedBox(height: 16),
             FloatingActionButton.extended(
               heroTag: "test",
-              backgroundColor: _isTesting ? Colors.redAccent : Colors.green, 
+              backgroundColor: _isTesting ? Colors.redAccent : const Color(0xFF00C853),
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               icon: Icon(_isTesting ? Icons.stop : Icons.play_arrow),
@@ -522,7 +535,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         ),
       ),
       body: Container(
-        color: const Color(0xFFF0F2F5),
+        color: const Color(0xFF0A1929),
         child: Stack(
           children: [
             InteractiveViewer(
@@ -589,12 +602,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               left: 16, right: 16, bottom: 75,
               child: Container(
                 padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: Colors.white.withOpacity(0.95), borderRadius: BorderRadius.circular(24), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 12)]),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF132F4C),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.1),
+                    width: 1,
+                  ),
+                ),
                 child: Row(
                   children: [
-                    const Icon(Icons.location_on, color: Colors.indigo, size: 20),
+                    const Icon(Icons.location_on, color: Color(0xFF2979FF), size: 20),
                     const SizedBox(width: 8),
-                    Expanded(child: Text('Current Location: ${predictedRoom.isEmpty ? 'Unknown' : predictedRoom}', style: const TextStyle(color: Colors.indigo, fontWeight: FontWeight.bold))),
+                    Expanded(child: Text('Current Location: ${predictedRoom.isEmpty ? 'Unknown' : predictedRoom}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600))),
                   ],
                 ),
               ),
@@ -611,32 +631,65 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       bottom: 24, left: 16, right: 16,
       child: Container(
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.15), blurRadius: 20, offset: const Offset(0, 10))]),
+        decoration: BoxDecoration(
+          color: const Color(0xFF132F4C),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.1),
+            width: 1,
+          ),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
-                CircleAvatar(backgroundColor: Colors.indigo.withOpacity(0.1), child: const Icon(Icons.location_on, color: Colors.indigo)),
+                CircleAvatar(
+                  backgroundColor: const Color(0xFF2979FF).withOpacity(0.2),
+                  child: const Icon(Icons.location_on, color: Color(0xFF2979FF)),
+                ),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(selectedDestination, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      Text("Floor $currentFloor", style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                      Text(selectedDestination, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+                      Text("Floor $currentFloor", style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13)),
                     ],
                   ),
                 ),
-                IconButton(onPressed: () => setState(() { selectedDestination = ''; _shortestPath = []; }), icon: const Icon(Icons.close)),
+                IconButton(
+                  onPressed: () => setState(() { selectedDestination = ''; _shortestPath = []; }),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                ),
               ],
             ),
-            const Divider(),
+            Divider(color: Colors.white.withOpacity(0.1)),
             Row(
               children: [
-                Expanded(child: OutlinedButton(onPressed: () {}, child: const Text("Info"))),
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {},
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      side: BorderSide(color: Colors.white.withOpacity(0.3)),
+                    ),
+                    child: const Text("Info"),
+                  ),
+                ),
                 const SizedBox(width: 12),
-                Expanded(flex: 2, child: ElevatedButton.icon(onPressed: _getDirections, icon: const Icon(Icons.directions, color: Colors.white), label: const Text("Get Directions"), style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white))),
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton.icon(
+                    onPressed: _getDirections,
+                    icon: const Icon(Icons.directions, color: Colors.white),
+                    label: const Text("Get Directions"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2979FF),
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
               ],
             ),
           ],
