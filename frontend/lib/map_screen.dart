@@ -443,7 +443,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   IconButton(
                     icon: const Icon(Icons.settings, color: Colors.indigo),
                     onPressed: () async {
-                      await Navigator.pushNamed(context, '/admin_panel');
+                      await Navigator.pushNamed(context, '/admin_dashboard');
                       _loadFloorData();
                     },
                   ),

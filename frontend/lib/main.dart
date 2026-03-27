@@ -5,9 +5,15 @@ import 'map_screen.dart';
 import 'app_state.dart';
 import 'db_helper.dart';
 import 'admin_screen.dart';
+import 'admin_dashboard_screen.dart';
+import 'admin/floor_plan_screen.dart';
+import 'admin/location_marking_screen.dart';
+import 'admin/training_data_screen.dart' as admin_training;
+import 'admin/model_retraining_screen.dart';
+import 'admin/stats_dashboard_screen.dart';
 import 'login_screen.dart';
 import 'digitized_map_view.dart';
-import 'training_data_screen.dart';
+import 'training_data_screen.dart' as legacy_training;
 
 
 void main() async {
@@ -63,8 +69,14 @@ class IndoorNavigationApp extends StatelessWidget {
         routes: {
           '/home': (_) => const MapScreen(),
           '/admin_panel': (_) => const AdminScreen(),
+          '/admin_dashboard': (_) => const AdminDashboardScreen(),
+          '/admin/floor_plan': (_) => const FloorPlanScreen(),
+          '/admin/location_marking': (_) => const LocationMarkingScreen(),
+          '/admin/training_data': (_) => const admin_training.TrainingDataScreen(),
+          '/admin/model_retraining': (_) => const ModelRetrainingScreen(),
+          '/admin/stats_dashboard': (_) => const StatsDashboardScreen(),
           '/digitized': (_) => const DigitizedMapView(),
-          '/training_data': (_) => const TrainingDataScreen(),
+          '/training_data': (_) => const legacy_training.TrainingDataScreen(),
           '/login': (_) => const LoginScreen(),
         },
       ),

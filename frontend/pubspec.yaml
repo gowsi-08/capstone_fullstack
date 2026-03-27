@@ -45,6 +45,7 @@ dependencies:
   app_settings: ^7.0.0
   connectivity_plus: ^7.0.0
   shared_preferences: ^2.5.4
+  google_fonts: ^6.1.0
 
 dev_dependencies:
   flutter_test:
