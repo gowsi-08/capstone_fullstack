@@ -188,7 +188,7 @@ class _CollectTabState extends State<CollectTab>
           'bssid': ap.bssid,
           'frequency': ap.frequency,
           'bandwidth': bandwidth,
-          'signal_strength': ap.level,
+          'signal_strength': ap.level,  // Keep this for display
           'estimated_distance':
               double.parse(estimatedDistance.toStringAsFixed(2)),
           'capabilities': ap.capabilities,
@@ -253,6 +253,11 @@ class _CollectTabState extends State<CollectTab>
 
     setState(() => _isSubmitting = true);
 
+    print('📤 Submitting training data:');
+    print('   Location: $location');
+    print('   Floor: $floor');
+    print('   Scans: ${selectedScans.length}');
+
     final result = await ApiService.submitTrainingData(
       location: location,
       landmark: landmark,
@@ -261,6 +266,8 @@ class _CollectTabState extends State<CollectTab>
     );
 
     setState(() => _isSubmitting = false);
+
+    print('📥 Submit result: $result');
 
     if (result != null && result['success'] == true) {
       Fluttertoast.showToast(
@@ -274,9 +281,12 @@ class _CollectTabState extends State<CollectTab>
         _selectedScans = [];
       });
     } else {
+      final errorMsg = result != null ? result['error'] ?? 'Unknown error' : 'No response from server';
+      print('❌ Submit failed: $errorMsg');
       Fluttertoast.showToast(
-        msg: '❌ Failed to submit',
+        msg: '❌ Failed: $errorMsg',
         backgroundColor: Colors.red,
+        toastLength: Toast.LENGTH_LONG,
       );
     }
   }

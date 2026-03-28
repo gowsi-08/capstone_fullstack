@@ -26,18 +26,30 @@ class TrainingService:
         with self._lock:
             records = []
             for row in rows:
+                # Parse floor to integer
+                floor_str = str(row.get('floor', row.get('Floor', 'ground floor'))).lower()
+                if 'ground' in floor_str or 'first' in floor_str or '1' in floor_str:
+                    floor_num = 1
+                elif 'second' in floor_str or '2' in floor_str:
+                    floor_num = 2
+                elif 'third' in floor_str or '3' in floor_str:
+                    floor_num = 3
+                else:
+                    floor_num = 1  # default
+                
                 # Create unique key to prevent duplicates
-                unique_key = f"{row.get('bssid', '')}_{row.get('location', '')}_{row.get('floor', '')}_{row.get('signal_strength', '')}"
+                signal_val = row.get('signal_strength', row.get('Signal Strength dBm', -100))
+                unique_key = f"{row.get('bssid', row.get('BSSID', ''))}_{row.get('location', row.get('Location', ''))}_{floor_num}_{signal_val}"
                 
                 record = {
                     'ssid': row.get('ssid', row.get('SSID', '')),
                     'location': row.get('location', row.get('Location', '')),
                     'landmark': row.get('landmark', row.get('Landmark', '')),
-                    'floor': int(row.get('floor', row.get('Floor', 1))),
+                    'floor': floor_num,
                     'bssid': str(row.get('bssid', row.get('BSSID', ''))).strip().lower(),
                     'frequency': int(row.get('frequency', row.get('Frequency (MHz)', 0))),
                     'bandwidth': int(row.get('bandwidth', row.get('Bandwidth (MHz)', 0))),
-                    'signal': int(row.get('signal_strength', row.get('Signal Strength dBm', -100))),
+                    'signal': int(signal_val),
                     'estimated_distance': float(row.get('estimated_distance', row.get('Estimated Distance m', 0))),
                     'capabilities': row.get('capabilities', row.get('Capabilities', '')),
                     'source': 'train',
