@@ -357,7 +357,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                 },
                 child: SizedBox(
                   width: (constraints.maxWidth - 32 * 2 - 24 * (crossAxisCount - 1)) /
-                      crossAxisCount,
+                      crossAxisCount * 1.30, // Increased by 5%
                   child: _buildDashboardCard(_cards[index]),
                 ),
               );

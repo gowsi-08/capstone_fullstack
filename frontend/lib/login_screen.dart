@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'dart:async';
+import 'package:http/http.dart' as http;
 import 'app_state.dart';
 import 'api_service.dart';
 
@@ -18,6 +21,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
   bool _obscurePassword = true;
   late AnimationController _fadeController;
   late Animation<double> _fadeAnimation;
+  
+  // Keep-alive timer to prevent server from sleeping
+  Timer? _keepAliveTimer;
 
   @override
   void initState() {
@@ -28,6 +34,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     );
     _fadeAnimation = CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut);
     _fadeController.forward();
+    
+    // Start keep-alive to wake up server
+    _startKeepAlive();
   }
 
   @override
@@ -35,7 +44,35 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     _usernameController.dispose();
     _passwordController.dispose();
     _fadeController.dispose();
+    _keepAliveTimer?.cancel();
     super.dispose();
+  }
+  
+  void _startKeepAlive() {
+    // Immediately ping the server to wake it up
+    _pingServer();
+    
+    // Then ping every 20 seconds to keep it awake
+    _keepAliveTimer = Timer.periodic(const Duration(seconds: 20), (timer) {
+      _pingServer();
+    });
+    
+    print('🔄 Keep-alive started from login screen');
+  }
+
+  Future<void> _pingServer() async {
+    try {
+      final url = Uri.parse('${ApiService.baseUrl}/health');
+      final resp = await http.get(url).timeout(const Duration(seconds: 5));
+      
+      if (resp.statusCode == 200) {
+        print('💚 Server keep-alive: OK');
+      } else {
+        print('⚠️ Server keep-alive: ${resp.statusCode}');
+      }
+    } catch (e) {
+      print('⚠️ Server keep-alive failed: $e');
+    }
   }
 
   /// Validates credentials locally as fallback when server is unreachable
@@ -123,20 +160,18 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Scaffold(
       body: Stack(
         children: [
-          // Background Gradient
+          // Background with theme colors
           Container(
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  colorScheme.primary,
-                  colorScheme.primary.withBlue(200),
+                  Color(0xFF0A1929), // Dark blue background
+                  Color(0xFF132F4C), // Lighter blue accent
                 ],
               ),
             ),
@@ -157,38 +192,42 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                           height: 100,
                           width: 100,
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: const Color(0xFF132F4C),
                             shape: BoxShape.circle,
+                            border: Border.all(
+                              color: const Color(0xFF2979FF).withOpacity(0.3),
+                              width: 2,
+                            ),
                             boxShadow: [
                               BoxShadow(
-                                color: Colors.black.withOpacity(0.2),
+                                color: const Color(0xFF2979FF).withOpacity(0.3),
                                 blurRadius: 20,
-                                offset: const Offset(0, 10),
+                                spreadRadius: 2,
                               ),
                             ],
                           ),
-                          child: Icon(
+                          child: const Icon(
                             Icons.location_on_rounded,
                             size: 60,
-                            color: colorScheme.primary,
+                            color: Color(0xFF2979FF),
                           ),
                         ),
                       ),
                       const SizedBox(height: 24),
-                      const Text(
+                      Text(
                         'FindMyWay',
-                        style: TextStyle(
-                          fontSize: 32,
+                        style: GoogleFonts.outfit(
+                          fontSize: 36,
                           fontWeight: FontWeight.bold,
                           color: Colors.white,
                           letterSpacing: 1.2,
                         ),
                       ),
-                      const Text(
+                      Text(
                         'Indoor Navigation System',
-                        style: TextStyle(
+                        style: GoogleFonts.inter(
                           fontSize: 16,
-                          color: Colors.white70,
+                          color: Colors.white60,
                         ),
                       ),
                       const SizedBox(height: 40),
@@ -196,8 +235,13 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                       // Main Login Card
                       Card(
                         elevation: 10,
+                        color: const Color(0xFF132F4C),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(24),
+                          side: BorderSide(
+                            color: Colors.white.withOpacity(0.1),
+                            width: 1,
+                          ),
                         ),
                         child: Padding(
                           padding: const EdgeInsets.all(32.0),
@@ -206,8 +250,12 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                               // Role Switcher
                               Container(
                                 decoration: BoxDecoration(
-                                  color: Colors.grey[200],
+                                  color: const Color(0xFF0A1929),
                                   borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: Colors.white.withOpacity(0.1),
+                                    width: 1,
+                                  ),
                                 ),
                                 child: Row(
                                   children: [
@@ -218,14 +266,14 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                                           duration: const Duration(milliseconds: 200),
                                           padding: const EdgeInsets.symmetric(vertical: 12),
                                           decoration: BoxDecoration(
-                                            color: !_isAdminMode ? colorScheme.primary : Colors.transparent,
+                                            color: !_isAdminMode ? const Color(0xFF2979FF) : Colors.transparent,
                                             borderRadius: BorderRadius.circular(12),
                                           ),
                                           child: Center(
                                             child: Text(
                                               'Student',
-                                              style: TextStyle(
-                                                color: !_isAdminMode ? Colors.white : Colors.grey[600],
+                                              style: GoogleFonts.inter(
+                                                color: !_isAdminMode ? Colors.white : Colors.white54,
                                                 fontWeight: FontWeight.bold,
                                               ),
                                             ),
@@ -240,14 +288,14 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                                           duration: const Duration(milliseconds: 200),
                                           padding: const EdgeInsets.symmetric(vertical: 12),
                                           decoration: BoxDecoration(
-                                            color: _isAdminMode ? colorScheme.primary : Colors.transparent,
+                                            color: _isAdminMode ? const Color(0xFF2979FF) : Colors.transparent,
                                             borderRadius: BorderRadius.circular(12),
                                           ),
                                           child: Center(
                                             child: Text(
                                               'Admin',
-                                              style: TextStyle(
-                                                color: _isAdminMode ? Colors.white : Colors.grey[600],
+                                              style: GoogleFonts.inter(
+                                                color: _isAdminMode ? Colors.white : Colors.white54,
                                                 fontWeight: FontWeight.bold,
                                               ),
                                             ),
@@ -265,16 +313,29 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                                 controller: _usernameController,
                                 keyboardType: TextInputType.text,
                                 textInputAction: TextInputAction.next,
+                                style: GoogleFonts.inter(color: Colors.white),
                                 decoration: InputDecoration(
                                   labelText: _isAdminMode ? 'Admin Email' : 'Roll Number',
+                                  labelStyle: GoogleFonts.inter(color: Colors.white60),
                                   hintText: _isAdminMode ? 'admin@admin.com' : '22ucs001',
-                                  prefixIcon: Icon(_isAdminMode ? Icons.admin_panel_settings : Icons.person_outline),
+                                  hintStyle: GoogleFonts.inter(color: Colors.white30),
+                                  prefixIcon: Icon(
+                                    _isAdminMode ? Icons.admin_panel_settings : Icons.person_outline,
+                                    color: const Color(0xFF2979FF),
+                                  ),
+                                  filled: true,
+                                  fillColor: const Color(0xFF0A1929),
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
                                   ),
                                   enabledBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
-                                    borderSide: BorderSide(color: Colors.grey[300]!),
+                                    borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: const BorderSide(color: Color(0xFF2979FF), width: 2),
                                   ),
                                 ),
                               ),
@@ -286,20 +347,33 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                                 obscureText: _obscurePassword,
                                 textInputAction: TextInputAction.done,
                                 onSubmitted: (_) => _login(),
+                                style: GoogleFonts.inter(color: Colors.white),
                                 decoration: InputDecoration(
                                   labelText: 'Password',
+                                  labelStyle: GoogleFonts.inter(color: Colors.white60),
                                   hintText: _isAdminMode ? '' : 'Same as roll number',
-                                  prefixIcon: const Icon(Icons.lock_outline),
+                                  hintStyle: GoogleFonts.inter(color: Colors.white30),
+                                  prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF2979FF)),
                                   suffixIcon: IconButton(
-                                    icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                                    icon: Icon(
+                                      _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                                      color: Colors.white54,
+                                    ),
                                     onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
                                   ),
+                                  filled: true,
+                                  fillColor: const Color(0xFF0A1929),
                                   border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
+                                    borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
                                   ),
                                   enabledBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(12),
-                                    borderSide: BorderSide(color: Colors.grey[300]!),
+                                    borderSide: BorderSide(color: Colors.white.withOpacity(0.1)),
+                                  ),
+                                  focusedBorder: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                    borderSide: const BorderSide(color: Color(0xFF2979FF), width: 2),
                                   ),
                                 ),
                               ),
@@ -312,12 +386,12 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                                 child: ElevatedButton(
                                   onPressed: _isLoading ? null : _login,
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: colorScheme.primary,
+                                    backgroundColor: const Color(0xFF2979FF),
                                     foregroundColor: Colors.white,
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(12),
                                     ),
-                                    elevation: 2,
+                                    elevation: 0,
                                   ),
                                   child: _isLoading
                                       ? const SizedBox(
@@ -330,7 +404,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                                         )
                                       : Text(
                                           _isAdminMode ? 'ADMIN LOGIN' : 'SIGN IN',
-                                          style: const TextStyle(
+                                          style: GoogleFonts.inter(
                                             fontSize: 16,
                                             fontWeight: FontWeight.bold,
                                             letterSpacing: 1.1,
@@ -347,9 +421,12 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                       // Guest Option
                       TextButton(
                         onPressed: _loginAsGuest,
-                        child: const Text(
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        ),
+                        child: Text(
                           'Continue as Guest',
-                          style: TextStyle(
+                          style: GoogleFonts.inter(
                             color: Colors.white,
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
@@ -362,7 +439,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                         _isAdminMode 
                           ? 'Admin features enabled after login' 
                           : 'Students: Use your roll number as username & password',
-                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                        style: GoogleFonts.inter(
+                          color: Colors.white54,
+                          fontSize: 12,
+                        ),
                         textAlign: TextAlign.center,
                       ),
                     ],

@@ -316,6 +316,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _loadAllNavigableLocations();
     _fetchMapBytes();
     _checkWifiStatus();
+    _checkAndEnsureModelTrained(); // Check model status and retrain if needed
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen((results) {
       setState(() {
         _wifiDisabled = !results.contains(ConnectivityResult.wifi);
@@ -331,6 +332,64 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     setState(() {
       _wifiDisabled = !results.contains(ConnectivityResult.wifi);
     });
+  }
+
+  Future<void> _checkAndEnsureModelTrained() async {
+    try {
+      print('🔍 Checking model training status...');
+      final stats = await ApiService.getTrainingStats();
+      
+      if (stats == null) {
+        print('⚠️ Could not fetch training stats');
+        return;
+      }
+      
+      final totalRows = stats['total_rows'] ?? 0;
+      final totalLocations = stats['total_locations'] ?? 0;
+      
+      print('📊 Training data: $totalRows rows, $totalLocations locations');
+      
+      // Check if model needs training (no data or model not trained)
+      if (totalRows == 0) {
+        print('⚠️ No training data available');
+        Fluttertoast.showToast(
+          msg: "⚠️ No training data. Please collect WiFi data first.",
+          backgroundColor: Colors.orange,
+          toastLength: Toast.LENGTH_LONG,
+        );
+        return;
+      }
+      
+      // Always trigger retrain on app start to ensure model is up-to-date
+      print('🔄 Triggering model retrain to ensure latest data...');
+      Fluttertoast.showToast(
+        msg: "🔄 Updating location model...",
+        backgroundColor: const Color(0xFF2979FF),
+        toastLength: Toast.LENGTH_SHORT,
+      );
+      
+      final success = await ApiService.triggerRetrain();
+      
+      if (success) {
+        print('✅ Model retrain triggered successfully');
+        // Wait a bit for the model to retrain
+        await Future.delayed(const Duration(seconds: 3));
+        Fluttertoast.showToast(
+          msg: "✅ Location model ready",
+          backgroundColor: const Color(0xFF00C853),
+          toastLength: Toast.LENGTH_SHORT,
+        );
+      } else {
+        print('❌ Failed to trigger model retrain');
+        Fluttertoast.showToast(
+          msg: "⚠️ Could not update model. Predictions may be inaccurate.",
+          backgroundColor: Colors.orange,
+          toastLength: Toast.LENGTH_LONG,
+        );
+      }
+    } catch (e) {
+      print('❌ Error checking model status: $e');
+    }
   }
 
   Future<void> _locateUser() async {
@@ -767,7 +826,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       floatingActionButton: Padding(
-        padding: const EdgeInsets.only(bottom: 110.0),
+        padding: const EdgeInsets.only(bottom: 90.0),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -792,16 +851,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 }
               },
             ),
-            const SizedBox(height: 16),
-            FloatingActionButton.extended(
-              heroTag: "test",
-              backgroundColor: _isTesting ? Colors.redAccent : const Color(0xFF00C853),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              icon: Icon(_isTesting ? Icons.stop : Icons.play_arrow),
-              label: Text(_isTesting ? 'Stop Test' : 'Test Random'),
-              onPressed: _toggleTesting,
-            ),
+            // const SizedBox(height: 16),
+            // FloatingActionButton.extended(
+            //   heroTag: "test",
+            //   backgroundColor: _isTesting ? Colors.redAccent : const Color(0xFF00C853),
+            //   foregroundColor: Colors.white,
+            //   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            //   icon: Icon(_isTesting ? Icons.stop : Icons.play_arrow),
+            //   label: Text(_isTesting ? 'Stop Test' : 'Test Random'),
+            //   onPressed: _toggleTesting,
+            // ),
           ],
         ),
       ),
@@ -822,19 +881,28 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   else
                     const SizedBox(width: 2000, height: 2000),
                   
-                  // All Navigable Locations (Purple Dots)
+                  // All Navigable Locations (Professional Markers)
                   if (_imageSize != null)
                     ..._navigableLocations.where((loc) => loc.locationName != predictedRoom && loc.locationName != selectedDestination).map((loc) {
                       final pixelPos = loc.toPixelOffset(_imageSize!);
                       return Positioned(
-                        left: pixelPos.dx - 4,
-                        top: pixelPos.dy - 4,
-                        child: Container(
-                          width: 8, height: 8,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF7C4DFF).withOpacity(0.4),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
+                        left: pixelPos.dx - 12,
+                        top: pixelPos.dy - 24,
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              selectedDestination = loc.locationName;
+                              _shortestPath = [];
+                            });
+                            _destMarkerController.forward(from: 0.7);
+                            _animateToLocation(pixelPos);
+                          },
+                          child: CustomPaint(
+                            size: const Size(24, 24),
+                            painter: LocationMarkerPainter(
+                              color: const Color(0xFF7C4DFF),
+                              isSelected: false,
+                            ),
                           ),
                         ),
                       );
@@ -929,65 +997,98 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               ),
             ),
             
-            // NEW: Current Location Text Card (above FABs)
-            if (predictedRoom.isNotEmpty)
-              Positioned(
-                left: 16,
-                right: 16,
-                bottom: selectedDestination.isEmpty ? 110 : 190, // Adjust based on directions banner
-                child: Container(
-                  height: 48,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF132F4C),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.1),
-                      width: 1,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(
-                        _isNavigable ? Icons.location_on : Icons.warning_amber_rounded,
-                        color: _isNavigable ? const Color(0xFF2979FF) : const Color(0xFFFF6D00),
-                        size: 20,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: RichText(
-                          text: TextSpan(
-                            style: GoogleFonts.inter(
-                              color: _isNavigable ? Colors.white : Colors.white70,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            children: [
-                              TextSpan(
-                                text: _isNavigable ? 'You are at:  ' : 'Predicted:  ',
-                              ),
-                              TextSpan(
-                                text: _isNavigable ? predictedRoom : 'Unknown Area',
-                                style: GoogleFonts.inter(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              if (!_isNavigable)
-                                TextSpan(
-                                  text: '  (approx.)',
-                                  style: GoogleFonts.inter(
-                                    color: const Color(0xFFFF6D00),
-                                    fontSize: 12,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
+            // Current Location Text Card (always visible)
+            Positioned(
+              left: 16,
+              right: 16,
+              bottom: selectedDestination.isEmpty ? 50 : 50, // Adjust based on directions banner
+              child: Container(
+                height: 48,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF132F4C),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.1),
+                    width: 1,
                   ),
                 ),
+                child: Row(
+                  children: [
+                    Icon(
+                      predictedRoom.isEmpty 
+                        ? Icons.location_searching
+                        : (_isNavigable ? Icons.location_on : Icons.warning_amber_rounded),
+                      color: predictedRoom.isEmpty
+                        ? Colors.white54
+                        : (_isNavigable ? const Color(0xFF2979FF) : const Color(0xFFFF6D00)),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: RichText(
+                        text: TextSpan(
+                          style: GoogleFonts.inter(
+                            color: predictedRoom.isEmpty 
+                              ? Colors.white54 
+                              : (_isNavigable ? Colors.white : Colors.white70),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          children: [
+                            TextSpan(
+                              text: predictedRoom.isEmpty
+                                ? 'Current Location:  '
+                                : (_isNavigable ? 'You are at:  ' : 'Predicted:  '),
+                            ),
+                            TextSpan(
+                              text: predictedRoom.isEmpty
+                                ? 'Not detected yet'
+                                : (_isNavigable ? predictedRoom : '$predictedRoom (not on map)'),
+                              style: GoogleFonts.inter(
+                                fontWeight: FontWeight.w600,
+                                fontStyle: predictedRoom.isEmpty ? FontStyle.italic : FontStyle.normal,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (_isTrackingLocation)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00C853).withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFF00C853), width: 1),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: const BoxDecoration(
+                                color: Color(0xFF00C853),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Live',
+                              style: GoogleFonts.inter(
+                                fontSize: 10,
+                                color: const Color(0xFF00C853),
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
               ),
+            ),
             
             // OLD: Current Location Info Card (kept for compatibility, can be removed)
             if (false && predictedRoom.isNotEmpty)
@@ -1612,4 +1713,98 @@ class DashedCirclePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// Professional Location Marker Painter
+class LocationMarkerPainter extends CustomPainter {
+  final Color color;
+  final bool isSelected;
+
+  LocationMarkerPainter({
+    required this.color,
+    this.isSelected = false,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    
+    // Shadow
+    final shadowPaint = Paint()
+      ..color = Colors.black.withOpacity(0.3)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+    
+    final shadowPath = Path();
+    shadowPath.moveTo(center.dx, size.height - 2);
+    shadowPath.lineTo(center.dx - 4, size.height - 8);
+    shadowPath.lineTo(center.dx + 4, size.height - 8);
+    shadowPath.close();
+    canvas.drawPath(shadowPath, shadowPaint);
+    
+    // Outer glow for selected state
+    if (isSelected) {
+      final glowPaint = Paint()
+        ..color = color.withOpacity(0.3)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
+      canvas.drawCircle(Offset(center.dx, center.dy - 4), 8, glowPaint);
+    }
+    
+    // Main pin body (teardrop shape)
+    final pinPath = Path();
+    final pinTop = center.dy - 16;
+    final pinRadius = 6.0;
+    
+    // Circle at top
+    pinPath.addOval(Rect.fromCircle(
+      center: Offset(center.dx, pinTop + pinRadius),
+      radius: pinRadius,
+    ));
+    
+    // Triangle pointing down
+    pinPath.moveTo(center.dx - pinRadius * 0.5, pinTop + pinRadius * 2);
+    pinPath.lineTo(center.dx, size.height - 4);
+    pinPath.lineTo(center.dx + pinRadius * 0.5, pinTop + pinRadius * 2);
+    pinPath.close();
+    
+    // Draw pin with gradient effect
+    final pinPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          color,
+          color.withOpacity(0.8),
+        ],
+      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
+      ..style = PaintingStyle.fill;
+    
+    canvas.drawPath(pinPath, pinPaint);
+    
+    // White border around pin
+    final borderPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawPath(pinPath, borderPaint);
+    
+    // Inner dot (white center)
+    final innerDotPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(Offset(center.dx, pinTop + pinRadius), 2.5, innerDotPaint);
+    
+    // Pulsing ring for selected state
+    if (isSelected) {
+      final ringPaint = Paint()
+        ..color = color.withOpacity(0.5)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2;
+      canvas.drawCircle(Offset(center.dx, pinTop + pinRadius), 9, ringPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant LocationMarkerPainter oldDelegate) {
+    return oldDelegate.isSelected != isSelected || oldDelegate.color != color;
+  }
 }
