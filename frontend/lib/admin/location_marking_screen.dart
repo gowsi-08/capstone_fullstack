@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import '../api_service.dart';
+import '../models/graph_models.dart';
+import 'floor_plan_screen.dart'; // For GraphMapPainter
 
 class LocationMarkingScreen extends StatefulWidget {
   const LocationMarkingScreen({Key? key}) : super(key: key);
@@ -23,12 +25,17 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
   bool _isMoveMode = false;
   String? _movingLocationId;
   bool _isLoading = true;
+  bool _isLoadingMap = false; // NEW: Separate loading state for map
   Uint8List? _mapImageBytes;
   Size? _imageSize;
   final TransformationController _transformController = TransformationController();
   late AnimationController _pulseController;
   bool _isMultiSelectMode = false;
   final Set<String> _selectedLocationIds = {};
+  
+  // NEW: Node selection mode for Add Location flow
+  bool _isNodeSelectionMode = false;
+  String? _selectedNodeForAssignment;
 
   @override
   void initState() {
@@ -45,20 +52,50 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
   }
 
   Future<void> _loadFloorData() async {
-    setState(() => _isLoading = true);
-    await Future.wait([_loadMapImage(), _loadLocations(), _loadGraph()]);
-    setState(() => _isLoading = false);
-  }
-
-  Future<void> _loadMapImage() async {
-    final b64 = await ApiService.getMapBase64(_currentFloor.toString());
-    if (b64 != null && mounted) {
-      final bytes = base64Decode(b64);
-      setState(() => _mapImageBytes = bytes);
-      _calculateImageSize(bytes);
+    setState(() {
+      _isLoading = true;
+      _isLoadingMap = true;
+    });
+    
+    try {
+      // Load all data for the current floor in parallel
+      await Future.wait([
+        _loadMapImage(),
+        _loadNavigableNodes(),
+        _loadGraph(),
+      ]);
+    } catch (e) {
+      print('Error loading floor data: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isLoadingMap = false;
+        });
+      }
     }
   }
 
+  Future<void> _loadMapImage() async {
+    try {
+      final b64 = await ApiService.getMapBase64(_currentFloor.toString());
+      if (b64 != null && mounted) {
+        final bytes = base64Decode(b64);
+        setState(() => _mapImageBytes = bytes);
+        _calculateImageSize(bytes);
+      } else {
+        // No map for this floor
+        if (mounted) {
+          setState(() => _mapImageBytes = null);
+        }
+      }
+    } catch (e) {
+      print('Error loading map image: $e');
+      if (mounted) {
+        setState(() => _mapImageBytes = null);
+      }
+    }
+  }
 
   void _calculateImageSize(Uint8List bytes) {
     final image = Image.memory(bytes);
@@ -67,35 +104,64 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
     }));
   }
 
-  Future<void> _loadLocations() async {
+  Future<void> _loadNavigableNodes() async {
     try {
-      // OLD ENDPOINT REMOVED - Use getNodeDataGroups instead
-      // This is a temporary stub until screen is rebuilt in Part 2
-      setState(() {
-        _locations.clear();
-      });
-      print('⚠️ Location marking screen needs rebuild - old endpoints removed');
+      final nodes = await ApiService.getNavigableNodes(_currentFloor);
+      if (mounted) {
+        setState(() {
+          _locations.clear();
+          for (var node in nodes) {
+            _locations.add(LocationMarker(
+              id: node.nodeId,
+              name: node.locationName,
+              landmark: '',
+              floor: node.floor,
+              x: node.x,
+              y: node.y,
+              nodeId: node.nodeId,
+            ));
+          }
+        });
+      }
+      print('📍 Loaded ${_locations.length} navigable nodes for floor $_currentFloor');
     } catch (e) {
-      print('Error loading locations: $e');
+      print('Error loading navigable nodes: $e');
     }
   }
 
   Future<void> _loadGraph() async {
     try {
-      final uri = Uri.parse('${ApiService.baseUrl}/admin/graph/$_currentFloor');
-      final resp = await http.get(uri);
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        if (data['exists'] == true) {
+      final graphData = await ApiService.getWalkableGraph(_currentFloor);
+      if (graphData != null && graphData['exists'] == true && mounted) {
+        setState(() {
+          _graphNodes.clear();
+          _graphEdges.clear();
+          
+          for (var nodeData in graphData['nodes'] ?? []) {
+            _graphNodes.add(GraphNode(
+              id: nodeData['id'],
+              x: nodeData['x'].toDouble(),
+              y: nodeData['y'].toDouble(),
+              label: nodeData['label'] ?? '',
+              datasetLocation: nodeData['dataset_location'],
+              isDefault: nodeData['is_default'] ?? false,
+            ));
+          }
+          
+          for (var edgeData in graphData['edges'] ?? []) {
+            _graphEdges.add(GraphEdge(
+              id: edgeData['id'],
+              fromNodeId: edgeData['from_node'],
+              toNodeId: edgeData['to_node'],
+            ));
+          }
+        });
+        print('📊 Loaded graph: ${_graphNodes.length} nodes, ${_graphEdges.length} edges for floor $_currentFloor');
+      } else {
+        if (mounted) {
           setState(() {
             _graphNodes.clear();
             _graphEdges.clear();
-            for (var nodeData in data['nodes'] ?? []) {
-              _graphNodes.add(GraphNode(id: nodeData['id'], x: nodeData['x'].toDouble(), y: nodeData['y'].toDouble(), label: nodeData['label'] ?? ''));
-            }
-            for (var edgeData in data['edges'] ?? []) {
-              _graphEdges.add(GraphEdge(id: edgeData['id'], fromNodeId: edgeData['from_node'], toNodeId: edgeData['to_node']));
-            }
           });
         }
       }
@@ -117,14 +183,607 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
   }
 
   void _enterPlacementMode() {
+    // NEW: Enter node selection mode on main map
     setState(() {
-      _isPlacementMode = true;
-      _selectedLocationId = null;
+      _isNodeSelectionMode = true;
+      _selectedNodeForAssignment = null;
     });
+  }
+
+  // NEW: Step 1 - Node Selection Bottom Sheet
+  Future<void> _showNodeSelectionSheet() async {
+    String? pickedNodeId;
+    
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          final selectedNode = pickedNodeId != null
+              ? _graphNodes.firstWhere((n) => n.id == pickedNodeId, orElse: () => _graphNodes.first)
+              : null;
+          
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.7,
+            decoration: const BoxDecoration(
+              color: Color(0xFF132F4C),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Column(
+              children: [
+                // Header
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Select a Node',
+                        style: GoogleFonts.outfit(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Choose an unassigned node to link a location',
+                        style: GoogleFonts.inter(
+                          color: Colors.white70,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                // Map panel (240px tall)
+                Container(
+                  height: 240,
+                  margin: const EdgeInsets.symmetric(horizontal: 24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0A1929),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.1),
+                      width: 1,
+                    ),
+                  ),
+                  child: _mapImageBytes != null && _imageSize != null
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: InteractiveViewer(
+                            panEnabled: true,
+                            scaleEnabled: true,
+                            minScale: 0.5,
+                            maxScale: 3.0,
+                            child: GestureDetector(
+                              onTapDown: (details) {
+                                // Find tapped node
+                                final tapPos = details.localPosition;
+                                for (var node in _graphNodes) {
+                                  final nodePos = Offset(
+                                    node.x * _imageSize!.width,
+                                    node.y * _imageSize!.height,
+                                  );
+                                  final distance = (tapPos - nodePos).distance;
+                                  
+                                  if (distance <= 20) {
+                                    // Check if node is already assigned
+                                    if (node.isMapped) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            'Already assigned to "${node.datasetLocation}"',
+                                            style: GoogleFonts.inter(color: Colors.white),
+                                          ),
+                                          backgroundColor: const Color(0xFFFF6D00),
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    
+                                    // Select this node
+                                    setModalState(() {
+                                      pickedNodeId = node.id;
+                                    });
+                                    return;
+                                  }
+                                }
+                              },
+                              child: Stack(
+                                children: [
+                                  Image.memory(_mapImageBytes!, fit: BoxFit.contain),
+                                  CustomPaint(
+                                    size: _imageSize!,
+                                    painter: GraphMapPainter(
+                                      nodes: _graphNodes,
+                                      edges: _graphEdges,
+                                      locations: [],
+                                      imageSize: _imageSize!,
+                                      selectedNodeId: pickedNodeId,
+                                      activeMode: null,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        )
+                      : Center(
+                          child: Text(
+                            'No map available',
+                            style: GoogleFonts.inter(color: Colors.white70),
+                          ),
+                        ),
+                ),
+                
+                // Instruction text
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'Tap an unassigned node on the map above',
+                    style: GoogleFonts.inter(
+                      color: Colors.white70,
+                      fontSize: 13,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                
+                // Selected node indicator
+                if (selectedNode != null)
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF00C853).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: const Color(0xFF00C853),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.check_circle, color: Color(0xFF00C853), size: 20),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            'Node selected at (${(selectedNode.x * 100).toStringAsFixed(0)}%, ${(selectedNode.y * 100).toStringAsFixed(0)}%)',
+                            style: GoogleFonts.inter(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            setModalState(() {
+                              pickedNodeId = null;
+                            });
+                          },
+                          child: Text(
+                            'Change',
+                            style: GoogleFonts.inter(
+                              color: const Color(0xFF00C853),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                
+                const Spacer(),
+                
+                // Bottom buttons
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: BorderSide(color: Colors.white.withOpacity(0.3)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: Text(
+                            'Cancel',
+                            style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          onPressed: pickedNodeId != null
+                              ? () {
+                                  Navigator.pop(context);
+                                  _showLocationNameSelectionSheet(pickedNodeId!);
+                                }
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF2979FF),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: Text(
+                            'Next →',
+                            style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // NEW: Step 2 - Location Name Selection Bottom Sheet
+  Future<void> _showLocationNameSelectionSheet(String nodeId) async {
+    final selectedNode = _graphNodes.firstWhere((n) => n.id == nodeId);
+    String? selectedLocationName;
+    List<Map<String, dynamic>> datasetLocations = [];
+    bool isLoading = true;
+    String searchQuery = '';
+    
+    // Fetch dataset locations
+    try {
+      datasetLocations = await ApiService.getDatasetLocations(_currentFloor);
+      isLoading = false;
+    } catch (e) {
+      print('Error fetching dataset locations: $e');
+      isLoading = false;
+    }
+    
+    if (!mounted) return;
+    
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) {
+          // Filter locations based on search
+          final filteredLocations = datasetLocations.where((loc) {
+            final name = loc['location'] as String;
+            return name.toLowerCase().contains(searchQuery.toLowerCase());
+          }).toList();
+          
+          // Separate assigned and unassigned
+          final unassignedLocations = filteredLocations.where((loc) => loc['is_assigned'] == false).toList();
+          final assignedLocations = filteredLocations.where((loc) => loc['is_assigned'] == true).toList();
+          
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.75,
+            decoration: const BoxDecoration(
+              color: Color(0xFF132F4C),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: Column(
+              children: [
+                // Header
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Assign Location Name',
+                        style: GoogleFonts.outfit(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Node at (${(selectedNode.x * 100).toStringAsFixed(0)}%, ${(selectedNode.y * 100).toStringAsFixed(0)}%) · Floor $_currentFloor',
+                        style: GoogleFonts.inter(
+                          color: Colors.white70,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                // Search field
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: TextField(
+                    onChanged: (value) {
+                      setModalState(() {
+                        searchQuery = value;
+                      });
+                    },
+                    style: GoogleFonts.inter(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Search locations...',
+                      hintStyle: GoogleFonts.inter(color: Colors.white54),
+                      prefixIcon: const Icon(Icons.search, color: Color(0xFF2979FF)),
+                      filled: true,
+                      fillColor: const Color(0xFF0A1929),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                ),
+                
+                const SizedBox(height: 16),
+                
+                // Location list
+                Expanded(
+                  child: isLoading
+                      ? const Center(
+                          child: CircularProgressIndicator(color: Color(0xFF2979FF)),
+                        )
+                      : unassignedLocations.isEmpty && assignedLocations.isEmpty
+                          ? Center(
+                              child: Text(
+                                'No dataset locations found for this floor',
+                                style: GoogleFonts.inter(color: Colors.white70),
+                              ),
+                            )
+                          : ListView(
+                              padding: const EdgeInsets.symmetric(horizontal: 24),
+                              children: [
+                                // Unassigned locations
+                                ...unassignedLocations.map((loc) {
+                                  final name = loc['location'] as String;
+                                  final count = loc['record_count'] as int;
+                                  final isSelected = selectedLocationName == name;
+                                  
+                                  return Container(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    decoration: BoxDecoration(
+                                      color: isSelected
+                                          ? const Color(0xFF2979FF).withOpacity(0.2)
+                                          : const Color(0xFF0A1929),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: isSelected
+                                            ? const Color(0xFF2979FF)
+                                            : Colors.white.withOpacity(0.1),
+                                        width: isSelected ? 2 : 1,
+                                      ),
+                                    ),
+                                    child: ListTile(
+                                      onTap: () {
+                                        setModalState(() {
+                                          selectedLocationName = name;
+                                        });
+                                      },
+                                      leading: Icon(
+                                        isSelected ? Icons.check_circle : Icons.circle_outlined,
+                                        color: isSelected ? const Color(0xFF2979FF) : Colors.white54,
+                                      ),
+                                      title: Text(
+                                        name,
+                                        style: GoogleFonts.inter(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      trailing: Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF00BCD4).withOpacity(0.2),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          '$count records',
+                                          style: GoogleFonts.inter(
+                                            color: const Color(0xFF00BCD4),
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }).toList(),
+                                
+                                // Assigned locations (greyed out)
+                                if (assignedLocations.isNotEmpty) ...[
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'Already Assigned',
+                                    style: GoogleFonts.inter(
+                                      color: Colors.white54,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  ...assignedLocations.map((loc) {
+                                    final name = loc['location'] as String;
+                                    final count = loc['record_count'] as int;
+                                    
+                                    return Container(
+                                      margin: const EdgeInsets.only(bottom: 8),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF0A1929).withOpacity(0.5),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(
+                                          color: Colors.white.withOpacity(0.05),
+                                          width: 1,
+                                        ),
+                                      ),
+                                      child: ListTile(
+                                        leading: const Icon(Icons.link, color: Colors.white24),
+                                        title: Text(
+                                          name,
+                                          style: GoogleFonts.inter(
+                                            color: Colors.white38,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        trailing: Text(
+                                          'Already linked',
+                                          style: GoogleFonts.inter(
+                                            color: Colors.white24,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }).toList(),
+                                ],
+                              ],
+                            ),
+                ),
+                
+                // Bottom buttons
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            _showNodeSelectionSheet();
+                          },
+                          icon: const Icon(Icons.arrow_back, size: 18),
+                          label: Text(
+                            'Back',
+                            style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.white,
+                            side: BorderSide(color: Colors.white.withOpacity(0.3)),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          onPressed: selectedLocationName != null
+                              ? () async {
+                                  Navigator.pop(context);
+                                  await _assignLocationToNode(nodeId, selectedLocationName!);
+                                }
+                              : null,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF00C853),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 0,
+                          ),
+                          child: Text(
+                            'Assign',
+                            style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // NEW: Assign location to node and save
+  Future<void> _assignLocationToNode(String nodeId, String locationName) async {
+    try {
+      // Find the node and update its dataset_location
+      final nodeIndex = _graphNodes.indexWhere((n) => n.id == nodeId);
+      if (nodeIndex == -1) {
+        throw Exception('Node not found');
+      }
+      
+      // Update the node
+      _graphNodes[nodeIndex] = _graphNodes[nodeIndex].copyWith(
+        datasetLocation: locationName,
+      );
+      
+      // Save the updated graph
+      final nodesJson = _graphNodes.map((n) => n.toJson()).toList();
+      final edgesJson = _graphEdges.map((e) => e.toJson()).toList();
+      
+      final success = await ApiService.saveWalkableGraph(_currentFloor, nodesJson, edgesJson);
+      
+      if (success) {
+        // Exit node selection mode
+        setState(() {
+          _isNodeSelectionMode = false;
+          _selectedNodeForAssignment = null;
+        });
+        
+        // Reload floor data
+        await _loadFloorData();
+        
+        if (mounted) {
+          final node = _graphNodes[nodeIndex];
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                '$locationName assigned to node at (${(node.x * 100).toStringAsFixed(0)}%, ${(node.y * 100).toStringAsFixed(0)}%)',
+                style: GoogleFonts.inter(color: Colors.white),
+              ),
+              backgroundColor: const Color(0xFF00C853),
+            ),
+          );
+        }
+      } else {
+        throw Exception('Failed to save graph');
+      }
+    } catch (e) {
+      print('Error assigning location: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Failed to assign location: $e',
+              style: GoogleFonts.inter(color: Colors.white),
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   void _handleMapTap(Offset localPosition) {
     if (_imageSize == null) return;
+
+    // NEW: Handle node selection mode for Add Location flow
+    if (_isNodeSelectionMode) {
+      _handleNodeSelection(localPosition);
+      return;
+    }
 
     if (_isPlacementMode) {
       _showAddLocationSheet(localPosition);
@@ -132,6 +791,43 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
       _moveLocation(_movingLocationId!, localPosition);
     } else {
       _selectLocationAtPosition(localPosition);
+    }
+  }
+
+  // NEW: Handle node selection on main map
+  void _handleNodeSelection(Offset position) {
+    // Find tapped node within 20px radius
+    for (var node in _graphNodes) {
+      final nodePos = Offset(
+        node.x * _imageSize!.width,
+        node.y * _imageSize!.height,
+      );
+      final distance = (position - nodePos).distance;
+      
+      if (distance <= 20) {
+        // Check if node is already assigned
+        if (node.isMapped) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Already assigned to "${node.datasetLocation}"',
+                style: GoogleFonts.inter(color: Colors.white),
+              ),
+              backgroundColor: const Color(0xFFFF6D00),
+            ),
+          );
+          return;
+        }
+        
+        // Node selected - proceed to location name selection
+        setState(() {
+          _selectedNodeForAssignment = node.id;
+        });
+        
+        // Show location name selection sheet
+        _showLocationNameSelectionSheet(node.id);
+        return;
+      }
     }
   }
 
@@ -379,12 +1075,15 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
         foregroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Location Marking', style: GoogleFonts.outfit(fontSize: 20, fontWeight: FontWeight.w600)),
-            Text('Mark and edit room positions', style: GoogleFonts.inter(fontSize: 12, color: Colors.white60)),
-          ],
+        title: Padding(
+          padding: const EdgeInsets.only(top: 8.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Location Marking', style: GoogleFonts.outfit(fontSize: 20, fontWeight: FontWeight.w600)),
+              Text('Mark and edit room positions', style: GoogleFonts.inter(fontSize: 12, color: Colors.white60)),
+            ],
+          ),
         ),
         actions: [
           if (_isMultiSelectMode)
@@ -421,6 +1120,7 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
         children: [
           _buildFloorSelector(),
           if (_isPlacementMode) _buildPlacementBanner(),
+          if (_isNodeSelectionMode) _buildNodeSelectionBanner(),
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator(color: Color(0xFF2979FF)))
@@ -430,7 +1130,7 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
           ),
         ],
       ),
-      floatingActionButton: _isPlacementMode || _isMoveMode
+      floatingActionButton: _isPlacementMode || _isMoveMode || _isNodeSelectionMode
           ? null
           : FloatingActionButton.extended(
               onPressed: _enterPlacementMode,
@@ -490,6 +1190,34 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
     );
   }
 
+  Widget _buildNodeSelectionBanner() {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      color: const Color(0xFF7C4DFF).withOpacity(0.2),
+      child: Row(
+        children: [
+          const Icon(Icons.touch_app, color: Color(0xFF7C4DFF), size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              _selectedNodeForAssignment != null
+                  ? 'Node selected! Opening location selection...'
+                  : 'Tap an unassigned node on the map',
+              style: GoogleFonts.inter(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+          ),
+          TextButton(
+            onPressed: () => setState(() {
+              _isNodeSelectionMode = false;
+              _selectedNodeForAssignment = null;
+            }),
+            child: Text('Cancel', style: GoogleFonts.inter(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMapPanel() {
     if (_mapImageBytes == null || _imageSize == null) {
       return Center(
@@ -514,33 +1242,61 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
         borderRadius: BorderRadius.circular(16),
         child: Stack(
           children: [
-            InteractiveViewer(
-              transformationController: _transformController,
-              minScale: 0.5,
-              maxScale: 5.0,
-              constrained: false,
-              boundaryMargin: const EdgeInsets.all(1000),
-              child: GestureDetector(
-                onTapDown: (details) => _handleMapTap(details.localPosition),
-                child: Stack(
+            // Show loading indicator while map is loading
+            if (_isLoadingMap)
+              const Center(
+                child: CircularProgressIndicator(color: Color(0xFF2979FF)),
+              )
+            // Show empty state if no map exists
+            else if (_mapImageBytes == null)
+              Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Image.memory(_mapImageBytes!, fit: BoxFit.none),
-                    CustomPaint(
-                      size: _imageSize!,
-                      painter: LocationMapPainter(
-                        locations: _locations,
-                        graphNodes: _graphNodes,
-                        graphEdges: _graphEdges,
-                        imageSize: _imageSize!,
-                        selectedLocationId: _selectedLocationId,
-                        pulseAnimation: _pulseController,
+                    Icon(Icons.map_outlined, size: 64, color: Colors.white.withOpacity(0.2)),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No map uploaded for Floor $_currentFloor',
+                      style: GoogleFonts.outfit(
+                        color: Colors.white70,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
+              )
+            // Show map with interactive viewer
+            else
+              InteractiveViewer(
+                transformationController: _transformController,
+                minScale: 0.5,
+                maxScale: 5.0,
+                constrained: false,
+                boundaryMargin: const EdgeInsets.all(1000),
+                child: GestureDetector(
+                  onTapDown: (details) => _handleMapTap(details.localPosition),
+                  child: Stack(
+                    children: [
+                      Image.memory(_mapImageBytes!, fit: BoxFit.none),
+                      if (_imageSize != null)
+                        CustomPaint(
+                          size: _imageSize!,
+                          painter: LocationMapPainter(
+                            locations: _locations,
+                            graphNodes: _graphNodes,
+                            graphEdges: _graphEdges,
+                            imageSize: _imageSize!,
+                            selectedLocationId: _selectedLocationId,
+                            selectedNodeId: _isNodeSelectionMode ? _selectedNodeForAssignment : null,
+                            pulseAnimation: _pulseController,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
               ),
-            ),
-            if (_selectedLocationId != null) _buildLocationDetailPeek(),
+            if (_selectedLocationId != null && !_isLoadingMap) _buildLocationDetailPeek(),
           ],
         ),
       ),
@@ -1029,35 +1785,6 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
   }
 }
 
-
-// Data Models
-class LocationMarker {
-  final String id;
-  final String name;
-  final double x;
-  final double y;
-  final String? nodeId;
-
-  LocationMarker({required this.id, required this.name, required this.x, required this.y, this.nodeId});
-}
-
-class GraphNode {
-  final String id;
-  final double x;
-  final double y;
-  final String label;
-
-  GraphNode({required this.id, required this.x, required this.y, required this.label});
-}
-
-class GraphEdge {
-  final String id;
-  final String fromNodeId;
-  final String toNodeId;
-
-  GraphEdge({required this.id, required this.fromNodeId, required this.toNodeId});
-}
-
 // Custom Painter for Location Map
 class LocationMapPainter extends CustomPainter {
   final List<LocationMarker> locations;
@@ -1065,6 +1792,7 @@ class LocationMapPainter extends CustomPainter {
   final List<GraphEdge> graphEdges;
   final Size imageSize;
   final String? selectedLocationId;
+  final String? selectedNodeId; // NEW: For node selection mode
   final Animation<double> pulseAnimation;
 
   LocationMapPainter({
@@ -1073,6 +1801,7 @@ class LocationMapPainter extends CustomPainter {
     required this.graphEdges,
     required this.imageSize,
     this.selectedLocationId,
+    this.selectedNodeId, // NEW
     required this.pulseAnimation,
   }) : super(repaint: pulseAnimation);
 
@@ -1093,14 +1822,37 @@ class LocationMapPainter extends CustomPainter {
     }
 
     // Draw graph nodes (tiny hollow circles, 30% opacity)
-    final nodePaint = Paint()
-      ..color = const Color(0xFF2979FF).withOpacity(0.3)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-
     for (var node in graphNodes) {
       final pos = Offset(node.x * imageSize.width, node.y * imageSize.height);
-      canvas.drawCircle(pos, 4, nodePaint);
+      final isSelectedNode = node.id == selectedNodeId;
+      
+      if (isSelectedNode) {
+        // Highlight selected node with pulsing green circle
+        final highlightPaint = Paint()
+          ..color = const Color(0xFF00C853).withOpacity(0.3 * pulseAnimation.value)
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, 20 * pulseAnimation.value, highlightPaint);
+        
+        // Draw selected node as filled green circle
+        final selectedNodePaint = Paint()
+          ..color = const Color(0xFF00C853)
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, 8, selectedNodePaint);
+        
+        // White border
+        final borderPaint = Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2;
+        canvas.drawCircle(pos, 8, borderPaint);
+      } else {
+        // Regular node rendering
+        final nodePaint = Paint()
+          ..color = const Color(0xFF2979FF).withOpacity(0.3)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5;
+        canvas.drawCircle(pos, 4, nodePaint);
+      }
     }
 
     // Draw location pins

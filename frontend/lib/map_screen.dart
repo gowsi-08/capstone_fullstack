@@ -8,6 +8,7 @@ import 'package:wifi_scan/wifi_scan.dart';
 import 'package:provider/provider.dart';
 import 'package:app_settings/app_settings.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'api_service.dart';
 import 'app_state.dart';
 import 'navigation_service.dart';
@@ -47,6 +48,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   bool _isTesting = false;
   Timer? _testTimer;
+  
+  // NEW: Continuous location tracking
+  Timer? _locationTrackingTimer;
+  bool _isTrackingLocation = false;
+  bool _isLocating = false;
   Map<String, List<Map<String, dynamic>>> _groupedTestData = {};
 
   bool _isLoading = true;
@@ -126,12 +132,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   Future<void> _loadFloorData() async {
     try {
-      // Load navigable locations for current floor
-      final locationsData = await ApiService.getNavigableLocations(int.parse(currentFloor));
+      // Load navigable nodes for current floor
+      final nodes = await ApiService.getNavigableNodes(int.parse(currentFloor));
       setState(() {
-        _navigableLocations = locationsData
-            .map((data) => NavigableLocation.fromJson(data))
-            .toList();
+        _navigableLocations = nodes.map((node) => NavigableLocation(
+          locationName: node.locationName,
+          nodeId: node.nodeId,
+          x: node.x,
+          y: node.y,
+          floor: node.floor,
+          recordCount: node.recordCount,
+        )).toList();
       });
       print('📍 Loaded ${_navigableLocations.length} navigable locations for floor $currentFloor');
       
@@ -144,15 +155,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   Future<void> _loadDefaultNode() async {
     try {
-      final defaultNodeData = await ApiService.getDefaultNode(int.parse(currentFloor));
-      if (defaultNodeData != null) {
+      final defaultNode = await ApiService.getDefaultNode(int.parse(currentFloor));
+      if (defaultNode != null) {
         setState(() {
           _defaultNode = NavigableLocation(
             locationName: 'Default',
-            nodeId: defaultNodeData['node_id'] as String,
-            x: (defaultNodeData['x'] as num).toDouble(),
-            y: (defaultNodeData['y'] as num).toDouble(),
-            floor: defaultNodeData['floor'] as int,
+            nodeId: defaultNode.nodeId,
+            x: defaultNode.x,
+            y: defaultNode.y,
+            floor: defaultNode.floor,
             recordCount: 0,
           );
         });
@@ -169,12 +180,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   Future<void> _loadAllNavigableLocations() async {
     try {
-      // Load navigable locations across all floors for search
-      final locationsData = await ApiService.getAllNavigableLocations();
+      // Load navigable nodes across all floors for search
+      final nodes = await ApiService.getAllNavigableNodes();
       setState(() {
-        _allNavigableLocations = locationsData
-            .map((data) => NavigableLocation.fromJson(data))
-            .toList();
+        _allNavigableLocations = nodes.map((node) => NavigableLocation(
+          locationName: node.locationName,
+          nodeId: node.nodeId,
+          x: node.x,
+          y: node.y,
+          floor: node.floor,
+          recordCount: node.recordCount,
+        )).toList();
       });
       print('📍 Loaded ${_allNavigableLocations.length} navigable locations across all floors');
     } catch (e) {
@@ -292,8 +308,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
-  bool _isLocating = false;
-
   @override
   void initState() {
     super.initState();
@@ -324,7 +338,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     await _checkWifiStatus();
     if (_wifiDisabled) {
-      AppSettings.openAppSettings(type: AppSettingsType.wifi);
+      if (!_isTrackingLocation) {
+        // Only show settings if not in tracking mode
+        AppSettings.openAppSettings(type: AppSettingsType.wifi);
+      }
       return;
     }
 
@@ -336,27 +353,83 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final canScan = await WiFiScan.instance.canStartScan();
       if (canScan == CanStartScan.yes) {
          await WiFiScan.instance.startScan();
+         // Wait longer for scan to complete - increased to 1500ms
+         await Future.delayed(const Duration(milliseconds: 1500));
          final results = await WiFiScan.instance.getScannedResults();
          if (results.isNotEmpty) {
            payload = results.map((ap) => {
              'BSSID': ap.bssid,
              'Signal Strength dBm': ap.level,
            }).toList();
+           print('📡 WiFi scan found ${results.length} access points');
+         } else {
+           print('⚠️ WiFi scan returned 0 results');
          }
+      } else {
+        // Handle other cases (failed, notSupported, etc.)
+        print('⚠️ Cannot start WiFi scan: $canScan');
+        setState(() => _isLocating = false);
+        if (!_isTrackingLocation) {
+          Fluttertoast.showToast(
+            msg: "⚠️ WiFi scanning not available. Check permissions and WiFi.",
+            backgroundColor: Colors.orange,
+          );
+        }
+        return;
       }
     } catch (e) {
-      print("Scan Error: $e");
+      print("❌ Scan Error: $e");
+      setState(() => _isLocating = false);
+      if (!_isTrackingLocation) {
+        Fluttertoast.showToast(
+          msg: "⚠️ WiFi scan error: $e",
+          backgroundColor: Colors.orange,
+        );
+      }
+      return;
     }
 
     if (payload.isEmpty) {
       setState(() => _isLocating = false);
-      Fluttertoast.showToast(msg: "⚠️ No Wi-Fi signals found.");
+      if (!_isTrackingLocation) {
+        Fluttertoast.showToast(
+          msg: "⚠️ No Wi-Fi signals found. Make sure WiFi is enabled and nearby.",
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange,
+        );
+      }
       return;
     }
 
+    print('📤 Sending ${payload.length} WiFi signals to server for prediction');
     final result = await ApiService.predictLocation(payload);
     
     setState(() => _isLocating = false);
+
+    if (result == null) {
+      print('❌ predictLocation returned null - server error or network issue');
+      if (!_isTrackingLocation) {
+        Fluttertoast.showToast(
+          msg: "⚠️ Could not predict location. Check server connection.",
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.red,
+        );
+      }
+      return;
+    }
+
+    // Check if model needs retraining
+    if (result.containsKey('error') && result['error'] == 'model_retrain_needed') {
+      print('❌ Model needs retraining - feature mismatch');
+      if (!_isTrackingLocation) {
+        Fluttertoast.showToast(
+          msg: "⚠️ Model needs retraining. Contact admin to retrain the model.",
+          toastLength: Toast.LENGTH_LONG,
+          backgroundColor: Colors.orange,
+        );
+      }
+      return;
+    }
 
     if (result != null) {
       final String predicted = result['predicted']!;
@@ -365,6 +438,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final double? nodeY = result['node_y'];
       final int? floor = result['floor'];
       
+      print('📍 Location predicted: $predicted (navigable: $isNavigable)');
+      
       setState(() {
         predictedRoom = predicted;
         _isNavigable = isNavigable;
@@ -372,16 +447,62 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _currentNodeY = nodeY;
       });
       
-      if (isNavigable && nodeX != null && nodeY != null && _imageSize != null) {
+      // Only animate on first location or manual button press
+      if (!_isTrackingLocation && isNavigable && nodeX != null && nodeY != null && _imageSize != null) {
         // Animate to the graph node position
         final pixelPos = Offset(nodeX * _imageSize!.width, nodeY * _imageSize!.height);
         _userMarkerController.forward(from: 0.7);
         _animateToLocation(pixelPos);
-      } else {
-        // Location not mapped - show warning
-        print('⚠️ Location "$predicted" is not mapped to navigation graph');
+      } else if (!_isTrackingLocation && !isNavigable && _defaultNode != null && _imageSize != null) {
+        // Animate to default node for unmapped locations
+        final pixelPos = _defaultNode!.toPixelOffset(_imageSize!);
+        _userMarkerController.forward(from: 0.7);
+        _animateToLocation(pixelPos);
+      } else if (_isTrackingLocation && isNavigable && nodeX != null && nodeY != null) {
+        // Just update marker position without animation during tracking
+        _userMarkerController.forward(from: 0.7);
+      }
+    } else {
+      if (!_isTrackingLocation) {
+        Fluttertoast.showToast(
+          msg: "⚠️ Could not predict location. Server error.",
+          backgroundColor: Colors.red,
+        );
       }
     }
+  }
+
+  void _startLocationTracking() {
+    if (_isTrackingLocation) return;
+    
+    setState(() => _isTrackingLocation = true);
+    
+    // Initial scan
+    _locateUser();
+    
+    // Start periodic scanning every 2 seconds
+    _locationTrackingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      _locateUser();
+    });
+    
+    Fluttertoast.showToast(
+      msg: "📍 Location tracking started",
+      backgroundColor: const Color(0xFF00C853),
+    );
+  }
+
+  void _stopLocationTracking() {
+    if (!_isTrackingLocation) return;
+    
+    _locationTrackingTimer?.cancel();
+    _locationTrackingTimer = null;
+    
+    setState(() => _isTrackingLocation = false);
+    
+    Fluttertoast.showToast(
+      msg: "Location tracking stopped",
+      backgroundColor: Colors.grey,
+    );
   }
 
   final TransformationController _transformationController = TransformationController();
@@ -409,6 +530,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _destMarkerController.dispose();
     _pathAnimationController.dispose();
     _testTimer?.cancel();
+    _locationTrackingTimer?.cancel();
     _transformationController.dispose();
     super.dispose();
   }
@@ -652,15 +774,22 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           children: [
             FloatingActionButton(
               heroTag: "locate",
-              backgroundColor: _wifiDisabled ? Colors.grey : const Color(0xFF2979FF),
+              backgroundColor: _wifiDisabled 
+                ? Colors.grey 
+                : (_isTrackingLocation ? const Color(0xFF00C853) : const Color(0xFF2979FF)),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              child: Icon(_wifiDisabled ? Icons.signal_wifi_off : Icons.my_location, color: Colors.white),
+              child: Icon(
+                _wifiDisabled 
+                  ? Icons.signal_wifi_off 
+                  : (_isTrackingLocation ? Icons.gps_fixed : Icons.my_location), 
+                color: Colors.white
+              ),
               onPressed: () {
-                 _locateUser();
-                 if (_isNavigable && _currentNodeX != null && _currentNodeY != null && _imageSize != null) {
-                   final pixelPos = Offset(_currentNodeX! * _imageSize!.width, _currentNodeY! * _imageSize!.height);
-                   _animateToLocation(pixelPos);
-                 }
+                if (_isTrackingLocation) {
+                  _stopLocationTracking();
+                } else {
+                  _startLocationTracking();
+                }
               },
             ),
             const SizedBox(height: 16),
@@ -712,14 +841,57 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     }).toList(),
 
                   // Current Location Marker (Blue Person Pin)
-                  if (_isNavigable && _currentNodeX != null && _currentNodeY != null && _imageSize != null)
-                    AnimatedBuilder(
-                      animation: _userMarkerController,
-                      builder: (ctx, child) {
-                        final pos = Offset(_currentNodeX! * _imageSize!.width, _currentNodeY! * _imageSize!.height);
-                        return Positioned(
-                          left: pos.dx - 24, top: pos.dy - 48,
-                          child: Transform.scale(scale: _userMarkerController.value, alignment: Alignment.bottomCenter, child: const Icon(Icons.person_pin_circle, color: Colors.blueAccent, size: 48)),
+                  // Shows at node position if navigable, or at default node if not navigable
+                  if (predictedRoom.isNotEmpty && _imageSize != null)
+                    Builder(
+                      builder: (context) {
+                        Offset? markerPos;
+                        bool isApproximate = false;
+                        
+                        if (_isNavigable && _currentNodeX != null && _currentNodeY != null) {
+                          // Navigable: show at actual node position
+                          markerPos = Offset(_currentNodeX! * _imageSize!.width, _currentNodeY! * _imageSize!.height);
+                        } else if (_defaultNode != null) {
+                          // Not navigable: show at default node position
+                          markerPos = _defaultNode!.toPixelOffset(_imageSize!);
+                          isApproximate = true;
+                        }
+                        
+                        if (markerPos == null) return const SizedBox.shrink();
+                        
+                        return AnimatedBuilder(
+                          animation: _userMarkerController,
+                          builder: (ctx, child) {
+                            return Positioned(
+                              left: markerPos!.dx - 24,
+                              top: markerPos.dy - 48,
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  // Dashed circle ring for approximate position
+                                  if (isApproximate)
+                                    CustomPaint(
+                                      size: const Size(48, 48),
+                                      painter: DashedCirclePainter(
+                                        color: Colors.white,
+                                        strokeWidth: 2,
+                                        radius: 20,
+                                      ),
+                                    ),
+                                  // Person pin icon
+                                  Transform.scale(
+                                    scale: _userMarkerController.value,
+                                    alignment: Alignment.bottomCenter,
+                                    child: const Icon(
+                                      Icons.person_pin_circle,
+                                      color: Colors.blueAccent,
+                                      size: 48,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         );
                       },
                     ),
@@ -756,8 +928,69 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 ],
               ),
             ),
-            // Current Location Info Card
+            
+            // NEW: Current Location Text Card (above FABs)
             if (predictedRoom.isNotEmpty)
+              Positioned(
+                left: 16,
+                right: 16,
+                bottom: selectedDestination.isEmpty ? 110 : 190, // Adjust based on directions banner
+                child: Container(
+                  height: 48,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF132F4C),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.1),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _isNavigable ? Icons.location_on : Icons.warning_amber_rounded,
+                        color: _isNavigable ? const Color(0xFF2979FF) : const Color(0xFFFF6D00),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: RichText(
+                          text: TextSpan(
+                            style: GoogleFonts.inter(
+                              color: _isNavigable ? Colors.white : Colors.white70,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            children: [
+                              TextSpan(
+                                text: _isNavigable ? 'You are at:  ' : 'Predicted:  ',
+                              ),
+                              TextSpan(
+                                text: _isNavigable ? predictedRoom : 'Unknown Area',
+                                style: GoogleFonts.inter(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              if (!_isNavigable)
+                                TextSpan(
+                                  text: '  (approx.)',
+                                  style: GoogleFonts.inter(
+                                    color: const Color(0xFFFF6D00),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            
+            // OLD: Current Location Info Card (kept for compatibility, can be removed)
+            if (false && predictedRoom.isNotEmpty)
               Positioned(
                 left: 16, right: 16, bottom: selectedDestination.isEmpty ? 24 : 140,
                 child: Container(
@@ -886,16 +1119,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             Divider(color: Colors.white.withOpacity(0.1)),
             Row(
               children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {},
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      side: BorderSide(color: Colors.white.withOpacity(0.3)),
-                    ),
-                    child: const Text("Info"),
-                  ),
-                ),
+                // Expanded(
+                //   child: OutlinedButton(
+                //     onPressed: () {},
+                //     style: OutlinedButton.styleFrom(
+                //       foregroundColor: Colors.white,
+                //       side: BorderSide(color: Colors.white.withOpacity(0.3)),
+                //     ),
+                //     child: const Text("Info"),
+                //   ),
+                // ),
                 const SizedBox(width: 12),
                 Expanded(
                   flex: 2,
@@ -918,18 +1151,181 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   Future<void> _getDirections() async {
-    // Check if current location is set
-    if (predictedRoom.isEmpty) {
+    if (selectedDestination.isEmpty) return;
+    
+    // Show dialog to select "From" location
+    await _showFromLocationDialog();
+  }
+
+  Future<void> _showFromLocationDialog() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF132F4C),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Row(
+          children: [
+            const Icon(Icons.navigation, color: Color(0xFF2979FF), size: 24),
+            const SizedBox(width: 12),
+            Text(
+              'Choose Starting Point',
+              style: GoogleFonts.outfit(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Current Location option
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2979FF).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.my_location, color: Color(0xFF2979FF), size: 24),
+              ),
+              title: Text(
+                'Current Location',
+                style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(
+                predictedRoom.isNotEmpty ? predictedRoom : 'Scan WiFi to detect',
+                style: GoogleFonts.inter(color: Colors.white70, fontSize: 12),
+              ),
+              onTap: () => Navigator.pop(context, 'current'),
+            ),
+            const SizedBox(height: 8),
+            Divider(color: Colors.white.withOpacity(0.1)),
+            const SizedBox(height: 8),
+            // Other locations option
+            ListTile(
+              leading: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF00BCD4).withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.location_on, color: Color(0xFF00BCD4), size: 24),
+              ),
+              title: Text(
+                'Choose Location',
+                style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(
+                'Select from available locations',
+                style: GoogleFonts.inter(color: Colors.white70, fontSize: 12),
+              ),
+              onTap: () => Navigator.pop(context, 'choose'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: GoogleFonts.inter(color: Colors.white70)),
+          ),
+        ],
+      ),
+    );
+
+    if (result == 'current') {
+      // Use current location - scan WiFi if not already done
+      await _useCurrentLocationForNavigation();
+    } else if (result == 'choose') {
+      // Show location picker
+      await _showLocationPicker();
+    }
+  }
+
+  Future<void> _useCurrentLocationForNavigation() async {
+    // Show loading indicator
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+              ),
+              const SizedBox(width: 16),
+              Text('Scanning WiFi...', style: GoogleFonts.inter(color: Colors.white)),
+            ],
+          ),
+          backgroundColor: const Color(0xFF2979FF),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+
+    // Scan WiFi and predict location
+    await _locateUser();
+    
+    // Wait a moment for the prediction to complete
+    await Future.delayed(const Duration(milliseconds: 500));
+    
+    // Now calculate route
+    if (predictedRoom.isNotEmpty) {
+      await _calculateRoute(predictedRoom, selectedDestination);
+    } else {
       Fluttertoast.showToast(
-        msg: "Scan WiFi first to detect your location",
+        msg: "Could not detect your location. Please try again.",
         backgroundColor: Colors.orange,
         textColor: Colors.white,
       );
-      return;
     }
-    
-    if (selectedDestination.isEmpty) return;
-    
+  }
+
+  Future<void> _showLocationPicker() async {
+    final selectedLocation = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF132F4C),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          'Select Starting Location',
+          style: GoogleFonts.outfit(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _navigableLocations.length,
+            itemBuilder: (context, index) {
+              final location = _navigableLocations[index];
+              return ListTile(
+                leading: const Icon(Icons.location_on, color: Color(0xFF7C4DFF)),
+                title: Text(
+                  location.locationName,
+                  style: GoogleFonts.inter(color: Colors.white, fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  'Floor ${location.floor}',
+                  style: GoogleFonts.inter(color: Colors.white70, fontSize: 12),
+                ),
+                onTap: () => Navigator.pop(context, location.locationName),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel', style: GoogleFonts.inter(color: Colors.white70)),
+          ),
+        ],
+      ),
+    );
+
+    if (selectedLocation != null) {
+      await _calculateRoute(selectedLocation, selectedDestination);
+    }
+  }
+
+  Future<void> _calculateRoute(String fromLocation, String toLocation) async {
     try {
       // Call graph-based pathfinding API
       final uri = Uri.parse('${ApiService.baseUrl}/navigation/path');
@@ -938,8 +1334,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'floor': int.parse(currentFloor),
-          'from_location': predictedRoom,
-          'to_location': selectedDestination,
+          'from_location': fromLocation,
+          'to_location': toLocation,
         }),
       );
       
@@ -1172,4 +1568,48 @@ class SimplePathPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+
+// Dashed Circle Painter for approximate position indicator
+class DashedCirclePainter extends CustomPainter {
+  final Color color;
+  final double strokeWidth;
+  final double radius;
+
+  DashedCirclePainter({
+    required this.color,
+    required this.strokeWidth,
+    required this.radius,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke;
+
+    final center = Offset(size.width / 2, size.height / 2);
+    const dashWidth = 4.0;
+    const dashSpace = 4.0;
+    const totalDashes = 24;
+
+    for (int i = 0; i < totalDashes; i++) {
+      final startAngle = (i * 2 * 3.14159265359 / totalDashes);
+      final sweepAngle = (dashWidth / (2 * 3.14159265359 * radius));
+
+      final path = Path()
+        ..addArc(
+          Rect.fromCircle(center: center, radius: radius),
+          startAngle,
+          sweepAngle,
+        );
+
+      canvas.drawPath(path, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import '../api_service.dart';
+import '../models/graph_models.dart';
 
 // Main Floor Plan Screen - Gallery View
 class FloorPlanScreen extends StatefulWidget {
@@ -106,10 +107,13 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
-        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Floor Plans & Navigation', style: GoogleFonts.outfit(fontSize: 20, fontWeight: FontWeight.w600)),
-          Text('Tap to edit paths and locations', style: GoogleFonts.inter(fontSize: 12, color: Colors.white60)),
-        ]),
+        title: Padding(
+          padding: const EdgeInsets.only(top: 8.0),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Floor Plans & Navigation', style: GoogleFonts.outfit(fontSize: 20, fontWeight: FontWeight.w600)),
+            Text('Tap to edit paths and locations', style: GoogleFonts.inter(fontSize: 12, color: Colors.white60)),
+          ]),
+        ),
         actions: [IconButton(icon: const Icon(Icons.refresh), tooltip: 'Refresh', onPressed: _loadAllFloorMaps)],
       ),
       body: _isInitialLoading ? _buildLoadingSkeleton() : GridView.builder(
@@ -172,7 +176,7 @@ class _FloorPlanScreenState extends State<FloorPlanScreen> {
 }
 
 
-// Floor Detail Screen with Mode Toggle
+// Floor Detail Screen - Edit Paths Only
 class FloorDetailScreen extends StatefulWidget {
   final int floor;
   final Uint8List imageBytes;
@@ -185,8 +189,6 @@ class FloorDetailScreen extends StatefulWidget {
 }
 
 class _FloorDetailScreenState extends State<FloorDetailScreen> {
-  bool _isEditMode = false;
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -196,205 +198,16 @@ class _FloorDetailScreenState extends State<FloorDetailScreen> {
         foregroundColor: Colors.white,
         elevation: 0,
         leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
-        title: Text('Floor ${widget.floor}', style: GoogleFonts.outfit(fontSize: 20, fontWeight: FontWeight.w600)),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(60),
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(child: _buildModeButton(icon: Icons.map_outlined, label: 'View Map', isSelected: !_isEditMode, onTap: () => setState(() => _isEditMode = false))),
-                const SizedBox(width: 12),
-                Expanded(child: _buildModeButton(icon: Icons.edit_road, label: 'Edit Paths', isSelected: _isEditMode, onTap: () => setState(() => _isEditMode = true))),
-              ],
-            ),
-          ),
+        title: Padding(
+          padding: const EdgeInsets.only(top: 4.0),
+          child: Text('Floor ${widget.floor} - Edit Paths', style: GoogleFonts.outfit(fontSize: 20, fontWeight: FontWeight.w600)),
         ),
       ),
-      body: _isEditMode ? PathEditorView(floor: widget.floor, imageBytes: widget.imageBytes) : MapViewMode(floor: widget.floor, imageBytes: widget.imageBytes, onMapUpdated: widget.onMapUpdated, onSwitchToEditMode: () => setState(() => _isEditMode = true)),
-    );
-  }
-
-  Widget _buildModeButton({required IconData icon, required String label, required bool isSelected, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF2979FF) : Colors.white.withOpacity(0.05),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: isSelected ? const Color(0xFF2979FF) : Colors.white.withOpacity(0.1)),
-        ),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(icon, size: 18, color: isSelected ? Colors.white : Colors.white60),
-          const SizedBox(width: 8),
-          Text(label, style: GoogleFonts.inter(color: isSelected ? Colors.white : Colors.white60, fontWeight: FontWeight.w600, fontSize: 14)),
-        ]),
-      ),
+      body: PathEditorView(floor: widget.floor, imageBytes: widget.imageBytes),
     );
   }
 }
 
-
-// Map View Mode
-class MapViewMode extends StatefulWidget {
-  final int floor;
-  final Uint8List imageBytes;
-  final VoidCallback onMapUpdated;
-  final VoidCallback? onSwitchToEditMode;
-
-  const MapViewMode({
-    Key? key,
-    required this.floor,
-    required this.imageBytes,
-    required this.onMapUpdated,
-    this.onSwitchToEditMode,
-  }) : super(key: key);
-
-  @override
-  State<MapViewMode> createState() => _MapViewModeState();
-}
-
-class _MapViewModeState extends State<MapViewMode> {
-  final List<GraphNode> _nodes = [];
-  final List<GraphEdge> _edges = [];
-  final List<LocationPin> _locations = [];
-  bool _isLoading = true;
-  Size? _imageSize;
-
-  @override
-  void initState() {
-    super.initState();
-    _calculateImageSize();
-    _loadData();
-  }
-
-  void _calculateImageSize() {
-    final image = Image.memory(widget.imageBytes);
-    image.image.resolve(const ImageConfiguration()).addListener(ImageStreamListener((info, _) {
-      if (mounted) setState(() => _imageSize = Size(info.image.width.toDouble(), info.image.height.toDouble()));
-    }));
-  }
-
-  Future<void> _loadData() async {
-    setState(() => _isLoading = true);
-    await Future.wait([_loadGraph(), _loadLocations()]);
-    setState(() => _isLoading = false);
-  }
-
-  Future<void> _loadGraph() async {
-    try {
-      final uri = Uri.parse('${ApiService.baseUrl}/admin/graph/${widget.floor}');
-      final resp = await http.get(uri);
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body);
-        if (data['exists'] == true) {
-          setState(() {
-            _nodes.clear();
-            _edges.clear();
-            for (var nodeData in data['nodes'] ?? []) {
-              _nodes.add(GraphNode(
-                id: nodeData['id'],
-                x: nodeData['x'].toDouble(),
-                y: nodeData['y'].toDouble(),
-                label: nodeData['label'] ?? '',
-                datasetLocation: nodeData['dataset_location'],
-                isDefault: nodeData['is_default'] ?? false,
-              ));
-            }
-            for (var edgeData in data['edges'] ?? []) {
-              _edges.add(GraphEdge(id: edgeData['id'], fromNodeId: edgeData['from_node'], toNodeId: edgeData['to_node']));
-            }
-          });
-        }
-      }
-    } catch (e) {
-      print('Error loading graph: $e');
-    }
-  }
-
-  Future<void> _loadLocations() async {
-    try {
-      // Use new navigable nodes endpoint instead of old locations endpoint
-      final nodes = await ApiService.getNavigableNodes(widget.floor);
-      setState(() {
-        _locations.clear();
-        for (var node in nodes) {
-          _locations.add(LocationPin(
-            name: node['location_name'] ?? '',
-            x: (node['x'] as num).toDouble(),
-            y: (node['y'] as num).toDouble(),
-          ));
-        }
-      });
-    } catch (e) {
-      print('Error loading locations: $e');
-    }
-  }
-
-  Future<void> _replaceMap() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery, maxWidth: 2500, maxHeight: 2500, imageQuality: 85);
-    if (picked == null) return;
-
-    final uri = Uri.parse('${ApiService.baseUrl}/admin/upload_map/${widget.floor}');
-    final req = http.MultipartRequest('POST', uri)..files.add(await http.MultipartFile.fromPath('file', picked.path));
-
-    try {
-      final resp = await req.send();
-      final respBody = await resp.stream.bytesToString();
-      final respJson = jsonDecode(respBody);
-      if (resp.statusCode == 200 && respJson['success'] == true) {
-        widget.onMapUpdated();
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('✅ Map replaced successfully!', style: GoogleFonts.inter()), backgroundColor: const Color(0xFF00C853)));
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ Failed: $e', style: GoogleFonts.inter()), backgroundColor: Colors.red));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_isLoading || _imageSize == null) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFF2979FF)));
-    }
-
-    return Stack(
-      children: [
-        InteractiveViewer(
-          minScale: 0.5,
-          maxScale: 5.0,
-          child: Stack(
-            children: [
-              Image.memory(widget.imageBytes, fit: BoxFit.none),
-              CustomPaint(size: _imageSize!, painter: MapViewPainter(nodes: _nodes, edges: _edges, locations: _locations, imageSize: _imageSize!)),
-            ],
-          ),
-        ),
-        Positioned(
-          bottom: 24, left: 16, right: 16,
-          child: Row(
-            children: [
-              Expanded(child: ElevatedButton.icon(
-                onPressed: _replaceMap,
-                icon: const Icon(Icons.upload_file, size: 18),
-                label: Text('Replace Map', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2979FF), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-              )),
-              const SizedBox(width: 12),
-              Expanded(child: ElevatedButton.icon(
-                onPressed: widget.onSwitchToEditMode ?? () {},
-                icon: const Icon(Icons.edit_road, size: 18),
-                label: Text('Edit Paths →', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BCD4), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
-              )),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
 
 
 // Path Editor View with Advanced Modes
@@ -479,9 +292,9 @@ class _PathEditorViewState extends State<PathEditorView> {
         _locations.clear();
         for (var node in nodes) {
           _locations.add(LocationPin(
-            name: node['location_name'] ?? '',
-            x: (node['x'] as num).toDouble(),
-            y: (node['y'] as num).toDouble(),
+            name: node.locationName,
+            x: node.x,
+            y: node.y,
           ));
         }
       });
@@ -743,7 +556,7 @@ class _PathEditorViewState extends State<PathEditorView> {
                 child: Stack(
                   children: [
                     Image.memory(widget.imageBytes, fit: BoxFit.none),
-                    CustomPaint(size: _imageSize!, painter: PathEditorPainter(nodes: _nodes, edges: _edges, locations: _locations, imageSize: _imageSize!, selectedNodeId: _selectedNodeId, activeMode: _activeMode)),
+                    CustomPaint(size: _imageSize!, painter: GraphMapPainter(nodes: _nodes, edges: _edges, locations: _locations, imageSize: _imageSize!, selectedNodeId: _selectedNodeId, activeMode: _activeMode)),
                   ],
                 ),
               ),
@@ -809,34 +622,7 @@ class _PathEditorViewState extends State<PathEditorView> {
   }
 }
 
-
-// Data Models
-class GraphNode {
-  final String id;
-  final double x;
-  final double y;
-  final String label;
-  final String? datasetLocation;
-  final bool isDefault;
-
-  GraphNode({
-    required this.id,
-    required this.x,
-    required this.y,
-    required this.label,
-    this.datasetLocation,
-    this.isDefault = false,
-  });
-}
-
-class GraphEdge {
-  final String id;
-  final String fromNodeId;
-  final String toNodeId;
-
-  GraphEdge({required this.id, required this.fromNodeId, required this.toNodeId});
-}
-
+// LocationPin class for graph painter
 class LocationPin {
   final String name;
   final double x;
@@ -845,156 +631,27 @@ class LocationPin {
   LocationPin({required this.name, required this.x, required this.y});
 }
 
-// Map View Painter (View Mode)
-class MapViewPainter extends CustomPainter {
-  final List<GraphNode> nodes;
-  final List<GraphEdge> edges;
-  final List<LocationPin> locations;
-  final Size imageSize;
-
-  MapViewPainter({required this.nodes, required this.edges, required this.locations, required this.imageSize});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    // Draw edges - blue lines, 3px, 60% opacity
-    final edgePaint = Paint()
-      ..color = const Color(0xFF2979FF).withOpacity(0.6)
-      ..strokeWidth = 3
-      ..style = PaintingStyle.stroke;
-
-    for (var edge in edges) {
-      final fromNode = nodes.firstWhere((n) => n.id == edge.fromNodeId, orElse: () => nodes.first);
-      final toNode = nodes.firstWhere((n) => n.id == edge.toNodeId, orElse: () => nodes.first);
-      final from = Offset(fromNode.x * imageSize.width, fromNode.y * imageSize.height);
-      final to = Offset(toNode.x * imageSize.width, toNode.y * imageSize.height);
-      canvas.drawLine(from, to, edgePaint);
-    }
-
-    // Draw nodes
-    for (var node in nodes) {
-      final pos = Offset(node.x * imageSize.width, node.y * imageSize.height);
-      
-      if (node.isDefault) {
-        // Default node: filled green circle, 12px, white star icon
-        final fillPaint = Paint()..color = const Color(0xFF00C853)..style = PaintingStyle.fill;
-        canvas.drawCircle(pos, 12, fillPaint);
-        
-        // White border
-        final borderPaint = Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2;
-        canvas.drawCircle(pos, 12, borderPaint);
-        
-        // Draw white star icon
-        _drawStar(canvas, pos, 6, Colors.white);
-        
-        // Label: "Default" in green text
-        final textPainter = TextPainter(
-          text: TextSpan(
-            text: 'Default',
-            style: TextStyle(
-              color: const Color(0xFF00C853),
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              fontFamily: 'Inter',
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        );
-        textPainter.layout();
-        textPainter.paint(canvas, Offset(pos.dx - textPainter.width / 2, pos.dy + 16));
-        
-      } else if (node.datasetLocation != null && node.datasetLocation!.isNotEmpty) {
-        // Named node: filled purple circle, 12px, white border, white center dot
-        final fillPaint = Paint()..color = const Color(0xFF7C4DFF)..style = PaintingStyle.fill;
-        canvas.drawCircle(pos, 12, fillPaint);
-        
-        // White border
-        final borderPaint = Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2;
-        canvas.drawCircle(pos, 12, borderPaint);
-        
-        // White center dot
-        final centerDotPaint = Paint()..color = Colors.white..style = PaintingStyle.fill;
-        canvas.drawCircle(pos, 3, centerDotPaint);
-        
-        // Label: location name in small white text below the node
-        final textPainter = TextPainter(
-          text: TextSpan(
-            text: node.datasetLocation!,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              fontFamily: 'Inter',
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-          maxLines: 1,
-          ellipsis: '...',
-        );
-        textPainter.layout(maxWidth: 100);
-        textPainter.paint(canvas, Offset(pos.dx - textPainter.width / 2, pos.dy + 16));
-        
-      } else {
-        // Plain corridor node: hollow teal circle, 10px radius
-        final hollowPaint = Paint()
-          ..color = const Color(0xFF00BCD4)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2;
-        canvas.drawCircle(pos, 10, hollowPaint);
-      }
-    }
-  }
-
-  void _drawStar(Canvas canvas, Offset center, double radius, Color color) {
-    final paint = Paint()..color = color..style = PaintingStyle.fill;
-    final path = Path();
-    
-    // 5-pointed star
-    for (int i = 0; i < 5; i++) {
-      double angle = (i * 4 * 3.14159265359 / 5) - (3.14159265359 / 2);
-      double x = center.dx + radius * _cos(angle);
-      double y = center.dy + radius * _sin(angle);
-      
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-    path.close();
-    canvas.drawPath(path, paint);
-  }
-  
-  // Simple approximations for cos and sin (good enough for star drawing)
-  double _cos(double angle) {
-    // Taylor series approximation
-    double x2 = angle * angle;
-    return 1 - x2 / 2 + x2 * x2 / 24 - x2 * x2 * x2 / 720;
-  }
-  
-  double _sin(double angle) {
-    // Taylor series approximation
-    double x2 = angle * angle;
-    return angle - angle * x2 / 6 + angle * x2 * x2 / 120;
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
-
-// Path Editor Painter (Edit Mode)
-class PathEditorPainter extends CustomPainter {
+// Shared Graph Map Painter (used by both View and Edit modes)
+class GraphMapPainter extends CustomPainter {
   final List<GraphNode> nodes;
   final List<GraphEdge> edges;
   final List<LocationPin> locations;
   final Size imageSize;
   final String? selectedNodeId;
-  final String activeMode;
+  final String? activeMode;
 
-  PathEditorPainter({required this.nodes, required this.edges, required this.locations, required this.imageSize, this.selectedNodeId, required this.activeMode});
+  GraphMapPainter({
+    required this.nodes,
+    required this.edges,
+    required this.locations,
+    required this.imageSize,
+    this.selectedNodeId,
+    this.activeMode,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Draw edges
+    // Draw edges (blue lines, 3px, 60% opacity)
     final edgePaint = Paint()
       ..color = const Color(0xFF2979FF).withOpacity(0.6)
       ..strokeWidth = 3
@@ -1012,38 +669,98 @@ class PathEditorPainter extends CustomPainter {
     for (var node in nodes) {
       final pos = Offset(node.x * imageSize.width, node.y * imageSize.height);
       final isSelected = node.id == selectedNodeId;
+      final isMapped = node.isMapped;
+      final isDefault = node.isDefault;
       
-      Color nodeColor = const Color(0xFF00BCD4);
-      if (isSelected && activeMode == 'add_edge') {
-        nodeColor = const Color(0xFF00C853); // Green for "from" node
-      } else if (isSelected) {
-        nodeColor = const Color(0xFFFF6D00); // Orange for selected
+      // Determine node appearance
+      Color nodeColor;
+      double nodeRadius;
+      bool showLabel = false;
+      String? labelText;
+      
+      if (isDefault) {
+        // Default node: filled green, 12px, "Default" label
+        nodeColor = const Color(0xFF00C853);
+        nodeRadius = 12;
+        showLabel = true;
+        labelText = 'Default';
+      } else if (isMapped) {
+        // Named node: filled purple, 12px, white border, white center dot, name label
+        nodeColor = const Color(0xFF7C4DFF);
+        nodeRadius = 12;
+        showLabel = true;
+        labelText = node.datasetLocation;
+      } else {
+        // Corridor node: hollow teal, 10px
+        nodeColor = const Color(0xFF00BCD4);
+        nodeRadius = 10;
       }
       
-      // Filled circle
-      final fillPaint = Paint()..color = nodeColor..style = PaintingStyle.fill;
-      canvas.drawCircle(pos, 10, fillPaint);
+      // Apply selection color in edit mode
+      if (isSelected && activeMode != null) {
+        if (activeMode == 'add_edge') {
+          nodeColor = const Color(0xFF00C853); // Green for "from" node
+        } else {
+          nodeColor = const Color(0xFFFF6D00); // Orange for selected
+        }
+      }
       
-      // White border
-      final borderPaint = Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2;
-      canvas.drawCircle(pos, 10, borderPaint);
-    }
-
-    // Draw location pins (read-only)
-    for (var location in locations) {
-      final pos = Offset(location.x, location.y);
-      final pinPaint = Paint()..color = const Color(0xFF7C4DFF).withOpacity(0.5)..style = PaintingStyle.fill;
-      canvas.drawCircle(pos, 6, pinPaint);
+      // Draw node
+      if (isMapped || isDefault) {
+        // Filled circle for named/default nodes
+        final fillPaint = Paint()..color = nodeColor..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, nodeRadius, fillPaint);
+        
+        // White border
+        final borderPaint = Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2;
+        canvas.drawCircle(pos, nodeRadius, borderPaint);
+        
+        // White center dot for named nodes
+        if (isMapped) {
+          final centerPaint = Paint()..color = Colors.white..style = PaintingStyle.fill;
+          canvas.drawCircle(pos, 4, centerPaint);
+        }
+      } else {
+        // Hollow circle for corridor nodes
+        final hollowPaint = Paint()
+          ..color = nodeColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2;
+        canvas.drawCircle(pos, nodeRadius, hollowPaint);
+      }
       
-      final textPainter = TextPainter(
-        text: TextSpan(text: location.name, style: const TextStyle(color: Colors.white70, fontSize: 9)),
-        textDirection: TextDirection.ltr,
-      );
-      textPainter.layout();
-      textPainter.paint(canvas, Offset(pos.dx - textPainter.width / 2, pos.dy + 10));
+      // Draw label below node
+      if (showLabel && labelText != null && labelText.isNotEmpty) {
+        final textPainter = TextPainter(
+          text: TextSpan(
+            text: labelText,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        textPainter.paint(
+          canvas,
+          Offset(pos.dx - textPainter.width / 2, pos.dy + nodeRadius + 4),
+        );
+      }
     }
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  bool shouldRepaint(covariant GraphMapPainter oldDelegate) {
+    return oldDelegate.nodes != nodes ||
+        oldDelegate.edges != edges ||
+        oldDelegate.locations != locations ||
+        oldDelegate.selectedNodeId != selectedNodeId ||
+        oldDelegate.activeMode != activeMode;
+  }
 }
+

@@ -44,10 +44,23 @@ class ModelService:
 
     def predict(self, bssid_to_signal):
         if self.model is None or not self.all_bssids:
+            print("❌ Model or BSSIDs not loaded", flush=True)
             return None
         
+        # Create feature vector matching the training data BSSIDs
         feature_vector = [bssid_to_signal.get(bssid, -100) for bssid in self.all_bssids]
-        prediction = self.model.predict([feature_vector])[0]
-        return str(prediction)
+        
+        print(f"🔮 Model expects {len(self.all_bssids)} features, got {len(feature_vector)} features", flush=True)
+        
+        try:
+            prediction = self.model.predict([feature_vector])[0]
+            print(f"✅ Prediction successful: {prediction}", flush=True)
+            return str(prediction)
+        except Exception as e:
+            print(f"❌ Prediction error: {e}", flush=True)
+            print(f"   Model was trained with different number of features", flush=True)
+            print(f"   Current BSSIDs in database: {len(self.all_bssids)}", flush=True)
+            print(f"   Solution: Retrain the model with current data", flush=True)
+            return None
 
 model_service = ModelService()

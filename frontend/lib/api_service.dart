@@ -63,17 +63,21 @@ class ApiService {
     try {
       final url = Uri.parse('$baseUrl/getlocation');
       print('🌐 API REQUEST: $url');
+      print('🌐 PAYLOAD: ${jsonEncode(payload)}');
       final resp = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(payload),
-      ).timeout(const Duration(seconds: 5));
+      ).timeout(const Duration(seconds: 10));
+      
+      print('🌐 RESPONSE STATUS: ${resp.statusCode}');
+      print('🌐 RESPONSE BODY: ${resp.body}');
       
       if (resp.statusCode == 200) {
         final j = jsonDecode(resp.body);
         if (j is List && j.isNotEmpty) {
           final data = j[0];
-          print('🌐 API RESPONSE: ${resp.body}');
+          print('🌐 API RESPONSE SUCCESS: ${resp.body}');
           return {
             'predicted': data['predicted']?.toString() ?? 'Unknown',
             'source': data['source']?.toString() ?? 'local',
@@ -83,7 +87,16 @@ class ApiService {
             'node_y': data['node_y'],
             'floor': data['floor'],
           };
+        } else {
+          print('❌ SERVER RESPONSE NOT A LIST OR EMPTY: ${resp.body}');
         }
+      } else if (resp.statusCode == 500) {
+        final errorBody = resp.body;
+        if (errorBody.contains('features') && errorBody.contains('expecting')) {
+          print('❌ MODEL NEEDS RETRAINING: Feature mismatch detected');
+          return {'error': 'model_retrain_needed'};
+        }
+        print('❌ SERVER ERROR: ${resp.statusCode} - ${resp.body}');
       } else {
         print('❌ SERVER ERROR: ${resp.statusCode} - ${resp.body}');
       }

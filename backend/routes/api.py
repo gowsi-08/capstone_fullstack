@@ -56,6 +56,7 @@ def get_prediction():
     try:
         data = request.get_json()
         if not data:
+            print("❌ No data provided in request", flush=True)
             return jsonify({'error': 'No data provided'}), 400
             
         num_scans = len(data) if isinstance(data, list) else 1
@@ -67,11 +68,16 @@ def get_prediction():
                 bssid = str(scan.get('BSSID', scan.get('bssid', ''))).strip().lower()
                 rssi = scan.get('Signal Strength dBm', scan.get('rssi', -100))
                 bssid_to_signal[bssid] = rssi
+                print(f"  📡 BSSID: {bssid}, RSSI: {rssi}", flush=True)
         else:
+            print("❌ Expected list of scans, got something else", flush=True)
             return jsonify({'error': 'Expected list of scans'}), 400
 
+        print(f"🔮 Calling model_service.predict with {len(bssid_to_signal)} BSSIDs", flush=True)
         prediction = model_service.predict(bssid_to_signal)
+        
         if prediction is None:
+            print("❌ Model returned None - model not loaded or internal error", flush=True)
             return jsonify({'error': 'Model not loaded or internal error'}), 500
 
         print(f"📡 SERVER: Prediction made for {prediction}", flush=True)
@@ -89,25 +95,34 @@ def get_prediction():
         training_record = db.training_data_records.find_one({'location': prediction})
         if training_record:
             floor = training_record.get('floor')
+            print(f"📍 Found training record for {prediction} on floor {floor}", flush=True)
             
             # Check if it's mapped to a node
             if floor:
                 graph = pathfinding_service.build_graph(floor)
                 if graph:
+                    print(f"📊 Graph loaded with {len(graph['nodes'])} nodes", flush=True)
                     for nid, node_data in graph['nodes'].items():
                         if node_data.get('dataset_location') == prediction:
                             is_navigable = True
                             node_id = nid
                             node_x = node_data['x']
                             node_y = node_data['y']
+                            print(f"✅ Location {prediction} is navigable at node {node_id}", flush=True)
                             break
                     
                     # If not navigable, get default node for fallback marker
                     if not is_navigable:
+                        print(f"⚠️ Location {prediction} is not mapped to any node", flush=True)
                         default_node = pathfinding_service.get_default_node(floor)
                         if default_node:
                             default_node_x = default_node['x']
                             default_node_y = default_node['y']
+                            print(f"📍 Using default node at ({default_node_x}, {default_node_y})", flush=True)
+                else:
+                    print(f"⚠️ No graph found for floor {floor}", flush=True)
+        else:
+            print(f"⚠️ No training record found for location: {prediction}", flush=True)
         
         response = {
             'predicted': prediction,
@@ -124,9 +139,12 @@ def get_prediction():
             response['default_node_x'] = default_node_x
             response['default_node_y'] = default_node_y
         
+        print(f"✅ Sending response: {response}", flush=True)
         return jsonify([response])
     except Exception as e:
-        print(f"❌ SERVER ERROR: {e}")
+        print(f"❌ SERVER ERROR: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @api_bp.route('/health', methods=['GET'])

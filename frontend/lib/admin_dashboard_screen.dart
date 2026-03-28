@@ -275,7 +275,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
 
   Widget _buildTopBar() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 44),
       decoration: BoxDecoration(
         color: const Color(0xFF132F4C),
         border: Border(
@@ -309,10 +309,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             ],
           ),
           const Spacer(),
-          IconButton(
-            icon: const Icon(Icons.notifications_outlined, color: Colors.white),
-            onPressed: () {},
-          ),
+          // IconButton(
+          //   icon: const Icon(Icons.notifications_outlined, color: Colors.white),
+          //   onPressed: () {},
+          // ),
           const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.home_outlined, color: Colors.white),
