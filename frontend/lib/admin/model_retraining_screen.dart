@@ -116,130 +116,89 @@ class _ModelRetrainingScreenState extends State<ModelRetrainingScreen>
                 // Main Retrain Card
                 Container(
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFFFF6D00).withOpacity(0.3),
-                        blurRadius: 30,
-                        offset: const Offset(0, 15),
+                    color: const Color(0xFF132F4C),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: const Color(0xFFFF6D00).withOpacity(0.3),
+                      width: 1,
+                    ),
+                  ),
+                  padding: const EdgeInsets.all(48),
+                  child: Column(
+                    children: [
+                      // Icon
+                      Container(
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFF6D00).withOpacity(0.15),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.model_training,
+                          size: 64,
+                          color: Color(0xFFFF6D00),
+                        ),
+                      ),
+
+                      const SizedBox(height: 32),
+
+                      Text(
+                        'Retrain ML Model',
+                        style: GoogleFonts.outfit(
+                          fontSize: 32,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.white,
+                        ),
+                      ),
+
+                      const SizedBox(height: 16),
+
+                      Text(
+                        'Retrain the RandomForest model with the latest WiFi fingerprint data to improve location prediction accuracy.',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.inter(
+                          fontSize: 15,
+                          color: Colors.white70,
+                          height: 1.6,
+                        ),
+                      ),
+
+                      const SizedBox(height: 40),
+
+                      // Retrain Button
+                      SizedBox(
+                        width: double.infinity,
+                        height: 64,
+                        child: ElevatedButton.icon(
+                          onPressed: _isRetraining ? null : _triggerRetrain,
+                          icon: _isRetraining
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 3,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.play_arrow, size: 28),
+                          label: Text(
+                            _isRetraining ? 'Retraining Model...' : 'Start Retraining',
+                            style: GoogleFonts.inter(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFFF6D00),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            elevation: 0,
+                          ),
+                        ),
                       ),
                     ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
-                    child: BackdropFilter(
-                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              const Color(0xFFFF6D00).withOpacity(0.2),
-                              const Color(0xFFFF6D00).withOpacity(0.05),
-                            ],
-                          ),
-                          borderRadius: BorderRadius.circular(24),
-                          border: Border.all(
-                            color: const Color(0xFFFF6D00).withOpacity(0.3),
-                            width: 1.5,
-                          ),
-                        ),
-                        padding: const EdgeInsets.all(48),
-                        child: Column(
-                          children: [
-                            // Icon
-                            AnimatedBuilder(
-                              animation: _pulseController,
-                              builder: (context, child) {
-                                return Transform.scale(
-                                  scale: 1.0 + (_pulseController.value * 0.1),
-                                  child: Container(
-                                    padding: const EdgeInsets.all(24),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFFF6D00).withOpacity(0.2),
-                                      shape: BoxShape.circle,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: const Color(0xFFFF6D00)
-                                              .withOpacity(0.4 * _pulseController.value),
-                                          blurRadius: 30,
-                                          spreadRadius: 10,
-                                        ),
-                                      ],
-                                    ),
-                                    child: const Icon(
-                                      Icons.model_training,
-                                      size: 64,
-                                      color: Color(0xFFFF6D00),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-
-                            const SizedBox(height: 32),
-
-                            Text(
-                              'Retrain ML Model',
-                              style: GoogleFonts.outfit(
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-
-                            const SizedBox(height: 16),
-
-                            Text(
-                              'Retrain the RandomForest model with the latest WiFi fingerprint data to improve location prediction accuracy.',
-                              textAlign: TextAlign.center,
-                              style: GoogleFonts.inter(
-                                fontSize: 15,
-                                color: Colors.white70,
-                                height: 1.6,
-                              ),
-                            ),
-
-                            const SizedBox(height: 40),
-
-                            // Retrain Button
-                            SizedBox(
-                              width: double.infinity,
-                              height: 64,
-                              child: ElevatedButton.icon(
-                                onPressed: _isRetraining ? null : _triggerRetrain,
-                                icon: _isRetraining
-                                    ? const SizedBox(
-                                        width: 24,
-                                        height: 24,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 3,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Icon(Icons.play_arrow, size: 28),
-                                label: Text(
-                                  _isRetraining ? 'Retraining Model...' : 'Start Retraining',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFFFF6D00),
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  elevation: 0,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
                   ),
                 ),
 
@@ -249,52 +208,68 @@ class _ModelRetrainingScreenState extends State<ModelRetrainingScreen>
                 if (_trainingStats != null) ...[
                   Container(
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
+                      color: const Color(0xFF132F4C),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.1),
+                        width: 1,
+                      ),
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.1),
-                              width: 1,
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.analytics_outlined,
+                              color: Color(0xFFFF6D00),
+                              size: 24,
                             ),
-                          ),
-                          padding: const EdgeInsets.all(32),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
+                            const SizedBox(width: 12),
+                            Text(
+                              'Training Dataset Overview',
+                              style: GoogleFonts.outfit(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                        LayoutBuilder(
+                          builder: (context, constraints) {
+                            // Responsive layout for stat cards
+                            if (constraints.maxWidth < 600) {
+                              // Stack vertically on small screens
+                              return Column(
                                 children: [
-                                  const Icon(
-                                    Icons.analytics_outlined,
-                                    color: Color(0xFFFF6D00),
-                                    size: 24,
+                                  _statCard(
+                                    'Total Samples',
+                                    '${_trainingStats!["total_rows"] ?? 0}',
+                                    Icons.dataset_outlined,
+                                    const Color(0xFF2979FF),
                                   ),
-                                  const SizedBox(width: 12),
-                                  Text(
-                                    'Training Dataset Overview',
-                                    style: GoogleFonts.outfit(
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                    ),
+                                  const SizedBox(height: 16),
+                                  _statCard(
+                                    'Unique Locations',
+                                    '${_trainingStats!["total_locations"] ?? 0}',
+                                    Icons.location_on_outlined,
+                                    const Color(0xFF00BCD4),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  _statCard(
+                                    'WiFi BSSIDs',
+                                    '${_trainingStats!["total_bssids"] ?? 0}',
+                                    Icons.wifi,
+                                    const Color(0xFF7C4DFF),
                                   ),
                                 ],
-                              ),
-                              const SizedBox(height: 24),
-                              Row(
+                              );
+                            } else {
+                              // Row layout for larger screens
+                              return Row(
                                 children: [
                                   Expanded(
                                     child: _statCard(
@@ -323,11 +298,11 @@ class _ModelRetrainingScreenState extends State<ModelRetrainingScreen>
                                     ),
                                   ),
                                 ],
-                              ),
-                            ],
-                          ),
+                              );
+                            }
+                          },
                         ),
-                      ),
+                      ],
                     ),
                   ),
 
@@ -336,71 +311,53 @@ class _ModelRetrainingScreenState extends State<ModelRetrainingScreen>
                   // Info Card
                   Container(
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.2),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
+                      color: const Color(0xFF132F4C),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.1),
+                        width: 1,
+                      ),
+                    ),
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(
+                              Icons.info_outline,
+                              color: Color(0xFF00BCD4),
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'How It Works',
+                              style: GoogleFonts.outfit(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        _infoItem(
+                          '1. Data Collection',
+                          'WiFi fingerprints are collected at known locations using the Training Data screen.',
+                        ),
+                        _infoItem(
+                          '2. Feature Engineering',
+                          'BSSID signal strengths are converted into feature vectors for the ML model.',
+                        ),
+                        _infoItem(
+                          '3. Model Training',
+                          'A RandomForest classifier learns the mapping between WiFi signals and locations.',
+                        ),
+                        _infoItem(
+                          '4. Deployment',
+                          'The trained model is saved and used for real-time location predictions.',
                         ),
                       ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(20),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.1),
-                              width: 1,
-                            ),
-                          ),
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  const Icon(
-                                    Icons.info_outline,
-                                    color: Color(0xFF00BCD4),
-                                    size: 20,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    'How It Works',
-                                    style: GoogleFonts.outfit(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 16),
-                              _infoItem(
-                                '1. Data Collection',
-                                'WiFi fingerprints are collected at known locations using the Training Data screen.',
-                              ),
-                              _infoItem(
-                                '2. Feature Engineering',
-                                'BSSID signal strengths are converted into feature vectors for the ML model.',
-                              ),
-                              _infoItem(
-                                '3. Model Training',
-                                'A RandomForest classifier learns the mapping between WiFi signals and locations.',
-                              ),
-                              _infoItem(
-                                '4. Deployment',
-                                'The trained model is saved and used for real-time location predictions.',
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
                     ),
                   ),
                 ],
@@ -417,7 +374,7 @@ class _ModelRetrainingScreenState extends State<ModelRetrainingScreen>
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: color.withOpacity(0.3),
           width: 1,
@@ -427,12 +384,16 @@ class _ModelRetrainingScreenState extends State<ModelRetrainingScreen>
         children: [
           Icon(icon, color: color, size: 32),
           const SizedBox(height: 12),
-          Text(
-            value,
-            style: GoogleFonts.outfit(
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              value,
+              style: GoogleFonts.outfit(
+                fontSize: 28,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+              maxLines: 1,
             ),
           ),
           const SizedBox(height: 4),

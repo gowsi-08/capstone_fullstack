@@ -98,7 +98,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   children: [
                     _buildTopBar(),
                     Expanded(
-                      child: _buildCardGrid(),
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 24),
+                        child: _buildCardGrid(),
+                      ),
                     ),
                   ],
                 ),
