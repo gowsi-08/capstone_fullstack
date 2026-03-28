@@ -58,7 +58,7 @@ class ApiService {
   // ==================
   // PREDICTION
   // ==================
-  static Future<Map<String, String>?> predictLocation(List<Map<String, dynamic>> payload) async {
+  static Future<Map<String, dynamic>?> predictLocation(List<Map<String, dynamic>> payload) async {
     try {
       final url = Uri.parse('$baseUrl/getlocation');
       print('🌐 API REQUEST: $url');
@@ -76,6 +76,11 @@ class ApiService {
           return {
             'predicted': data['predicted']?.toString() ?? 'Unknown',
             'source': data['source']?.toString() ?? 'local',
+            'is_navigable': data['is_navigable'] ?? false,
+            'node_id': data['node_id'],
+            'node_x': data['node_x'],
+            'node_y': data['node_y'],
+            'floor': data['floor'],
           };
         }
       } else {
@@ -395,5 +400,333 @@ class ApiService {
       print('Error exporting records: $e');
     }
     return null;
+  }
+
+  // ==================
+  // GRAPH MANAGEMENT
+  // ==================
+  
+  /// Get walkable graph for a floor
+  static Future<Map<String, dynamic>?> getWalkableGraph(int floor) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/graph/$floor');
+      print('📊 Fetching graph from: $url');
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        print('📊 Graph response: ${data['exists']} - ${data['nodes']?.length ?? 0} nodes, ${data['edges']?.length ?? 0} edges');
+        return data;
+      } else {
+        print('❌ Graph fetch error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error fetching graph: $e');
+    }
+    return null;
+  }
+
+  /// Save walkable graph for a floor
+  static Future<bool> saveWalkableGraph(int floor, List<Map<String, dynamic>> nodes, List<Map<String, dynamic>> edges) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/graph/$floor');
+      print('💾 Saving graph to: $url');
+      print('💾 Nodes: ${nodes.length}, Edges: ${edges.length}');
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'nodes': nodes,
+          'edges': edges,
+        }),
+      ).timeout(const Duration(seconds: 15));
+      
+      if (resp.statusCode == 200) {
+        print('✅ Graph saved successfully');
+        return true;
+      } else {
+        print('❌ Graph save error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error saving graph: $e');
+    }
+    return false;
+  }
+
+  /// Clear/delete walkable graph for a floor
+  static Future<bool> clearWalkableGraph(int floor) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/graph/$floor');
+      print('🗑️ Deleting graph from: $url');
+      final resp = await http.delete(url).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        print('✅ Graph deleted successfully');
+        return true;
+      } else {
+        print('❌ Graph delete error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error deleting graph: $e');
+    }
+    return false;
+  }
+
+  // ==================
+  // PATHFINDING
+  // ==================
+  
+  /// Calculate navigation path between two locations
+  static Future<Map<String, dynamic>?> getNavigationPath({
+    required int floor,
+    required String fromLocation,
+    required String toLocation,
+  }) async {
+    try {
+      final url = Uri.parse('$baseUrl/navigation/path');
+      print('🗺️ Calculating path from "$fromLocation" to "$toLocation" on floor $floor');
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'floor': floor,
+          'from_location': fromLocation,
+          'to_location': toLocation,
+        }),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        print('🗺️ Path response: found=${data['found']}, nodes=${data['path_nodes']?.length ?? 0}');
+        return data;
+      } else {
+        print('❌ Pathfinding error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error calculating path: $e');
+    }
+    return null;
+  }
+
+  // ==================
+  // LOCATION MANAGEMENT
+  // ==================
+  
+  /// Get locations for a specific floor
+  static Future<List<Map<String, dynamic>>> getLocations(int floor) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/locations/$floor');
+      print('📍 Fetching locations for floor $floor from: $url');
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(resp.body);
+        print('📍 Locations response: ${data.length} locations');
+        return data.cast<Map<String, dynamic>>();
+      } else {
+        print('❌ Locations fetch error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error fetching locations: $e');
+    }
+    return [];
+  }
+
+  /// Create a new location
+  static Future<bool> createLocation(int floor, Map<String, dynamic> data) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/locations/$floor');
+      print('➕ Creating location on floor $floor: ${data['name']}');
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(data),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        print('✅ Location created successfully');
+        return true;
+      } else {
+        print('❌ Location create error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error creating location: $e');
+    }
+    return false;
+  }
+
+  /// Update an existing location
+  static Future<bool> updateLocation(String id, Map<String, dynamic> data) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/location/$id');
+      print('✏️ Updating location $id: ${data['name']}');
+      final resp = await http.put(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(data),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        print('✅ Location updated successfully');
+        return true;
+      } else {
+        print('❌ Location update error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error updating location: $e');
+    }
+    return false;
+  }
+
+  /// Delete a location
+  static Future<bool> deleteLocation(String id) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/location/$id');
+      print('🗑️ Deleting location $id');
+      final resp = await http.delete(url).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        print('✅ Location deleted successfully');
+        return true;
+      } else {
+        print('❌ Location delete error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error deleting location: $e');
+    }
+    return false;
+  }
+
+  /// Link a location to a graph node
+  static Future<bool> linkLocationToNode(String locationId, String nodeId) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/location/$locationId/link-node');
+      print('🔗 Linking location $locationId to node $nodeId');
+      final resp = await http.put(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'node_id': nodeId}),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        print('✅ Location linked to node successfully');
+        return true;
+      } else {
+        print('❌ Link location error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error linking location: $e');
+    }
+    return false;
+  }
+
+  // ==================
+  // DATASET LOCATION MAPPING
+  // ==================
+  
+  /// Get all distinct dataset locations for a floor with assignment status
+  static Future<List<Map<String, dynamic>>> getDatasetLocations(int floor) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/dataset-locations/$floor');
+      print('📊 Fetching dataset locations for floor $floor');
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(resp.body);
+        print('📊 Dataset locations: ${data.length} locations');
+        return data.cast<Map<String, dynamic>>();
+      } else {
+        print('❌ Dataset locations error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error fetching dataset locations: $e');
+    }
+    return [];
+  }
+
+  /// Assign a dataset location to a node
+  static Future<Map<String, dynamic>?> assignDatasetLocation(
+    int floor,
+    String nodeId,
+    String datasetLocation,
+  ) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/graph/$floor/node/$nodeId/assign-location');
+      print('🔗 Assigning "$datasetLocation" to node $nodeId on floor $floor');
+      final resp = await http.put(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'dataset_location': datasetLocation}),
+      ).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        print('✅ Assignment successful: ${data['message']}');
+        return data;
+      } else {
+        print('❌ Assignment error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error assigning dataset location: $e');
+    }
+    return null;
+  }
+
+  /// Unassign dataset location from a node
+  static Future<bool> unassignDatasetLocation(int floor, String nodeId) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/graph/$floor/node/$nodeId/unassign-location');
+      print('🗑️ Unassigning dataset location from node $nodeId on floor $floor');
+      final resp = await http.put(url).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        print('✅ Unassignment successful');
+        return true;
+      } else {
+        print('❌ Unassignment error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error unassigning dataset location: $e');
+    }
+    return false;
+  }
+
+  /// Get navigable locations for a floor
+  static Future<List<Map<String, dynamic>>> getNavigableLocations(int floor) async {
+    try {
+      final url = Uri.parse('$baseUrl/navigation/locations/$floor');
+      print('🗺️ Fetching navigable locations for floor $floor');
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(resp.body);
+        print('🗺️ Navigable locations: ${data.length} locations');
+        return data.cast<Map<String, dynamic>>();
+      } else {
+        print('❌ Navigable locations error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error fetching navigable locations: $e');
+    }
+    return [];
+  }
+
+  /// Get all navigable locations across all floors
+  static Future<List<Map<String, dynamic>>> getAllNavigableLocations() async {
+    try {
+      final url = Uri.parse('$baseUrl/navigation/locations/all');
+      print('🗺️ Fetching all navigable locations');
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(resp.body);
+        print('🗺️ All navigable locations: ${data.length} locations');
+        return data.cast<Map<String, dynamic>>();
+      } else {
+        print('❌ All navigable locations error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error fetching all navigable locations: $e');
+    }
+    return [];
   }
 }

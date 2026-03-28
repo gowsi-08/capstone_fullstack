@@ -47,6 +47,8 @@ def login():
 # =====================
 # PREDICTION ROUTE
 # =====================
+# PREDICTION ROUTE
+# =====================
 @api_bp.route('/getlocation', methods=['POST'])
 def get_prediction():
     try:
@@ -71,9 +73,39 @@ def get_prediction():
             return jsonify({'error': 'Model not loaded or internal error'}), 500
 
         print(f"📡 SERVER: Prediction made for {prediction}", flush=True)
+        
+        # Check if predicted location is mapped to a graph node
+        is_navigable = False
+        node_id = None
+        node_x = None
+        node_y = None
+        floor = None
+        
+        # Try to find which floor this location is on
+        training_record = db.training_data_records.find_one({'location': prediction})
+        if training_record:
+            floor = training_record.get('floor')
+            
+            # Check if it's mapped to a node
+            if floor:
+                graph = pathfinding_service.build_graph(floor)
+                if graph:
+                    for nid, node_data in graph['nodes'].items():
+                        if node_data.get('dataset_location') == prediction:
+                            is_navigable = True
+                            node_id = nid
+                            node_x = node_data['x']
+                            node_y = node_data['y']
+                            break
+        
         return jsonify([{
             'predicted': prediction,
-            'source': 'flask_server'
+            'source': 'flask_server',
+            'is_navigable': is_navigable,
+            'node_id': node_id,
+            'node_x': node_x,
+            'node_y': node_y,
+            'floor': floor
         }])
     except Exception as e:
         print(f"❌ SERVER ERROR: {e}")
@@ -798,6 +830,128 @@ def link_location_to_node(loc_id):
         if result.matched_count == 0:
             return jsonify({'error': 'Location not found'}), 404
         
+        return jsonify({'success': True, 'message': 'Location linked to node'})
+    except Exception as e:
+        print(f"❌ LINK LOCATION ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# =====================
+# DATASET LOCATION MAPPING ROUTES
+# =====================
+@api_bp.route('/admin/dataset-locations/<int:floor>', methods=['GET'])
+def get_dataset_locations(floor):
+    """
+    Get all distinct dataset locations for a floor with assignment status
+    Returns: [{
+        'location': str,
+        'floor': int,
+        'record_count': int,
+        'assigned_node_id': str or None,
+        'is_assigned': bool
+    }]
+    """
+    try:
+        locations = pathfinding_service.get_dataset_locations(floor)
+        print(f"📊 DATASET LOCATIONS: Floor {floor} - {len(locations)} locations")
+        return jsonify(locations)
+    except Exception as e:
+        print(f"❌ GET DATASET LOCATIONS ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/graph/<int:floor>/node/<node_id>/assign-location', methods=['PUT'])
+def assign_dataset_location_to_node(floor, node_id):
+    """
+    Assign a dataset location to a node
+    Body: {'dataset_location': 'Room 101'}
+    Ensures uniqueness: only one node per floor can have a given dataset_location
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        dataset_location = data.get('dataset_location', '').strip()
+        if not dataset_location:
+            return jsonify({'error': 'dataset_location required'}), 400
+        
+        result = pathfinding_service.assign_dataset_location(floor, node_id, dataset_location)
+        
+        if result['success']:
+            print(f"✅ ASSIGNED: {dataset_location} → Node {node_id} (Floor {floor})")
+            if result['previous_node_id']:
+                print(f"   Unassigned from: {result['previous_node_id']}")
+        else:
+            print(f"❌ ASSIGN FAILED: {result['message']}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"❌ ASSIGN LOCATION ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/graph/<int:floor>/node/<node_id>/unassign-location', methods=['PUT'])
+def unassign_dataset_location_from_node(floor, node_id):
+    """Remove dataset_location assignment from a node"""
+    try:
+        result = pathfinding_service.unassign_dataset_location(floor, node_id)
+        
+        if result['success']:
+            print(f"✅ UNASSIGNED: Node {node_id} (Floor {floor})")
+        else:
+            print(f"❌ UNASSIGN FAILED: {result['message']}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"❌ UNASSIGN LOCATION ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/navigation/locations/<int:floor>', methods=['GET'])
+def get_navigable_locations_for_floor(floor):
+    """
+    Get only nodes that have dataset_location set (navigable destinations) for a specific floor
+    Returns: [{
+        'location_name': str,
+        'node_id': str,
+        'x': float,
+        'y': float,
+        'floor': int,
+        'record_count': int
+    }]
+    """
+    try:
+        locations = pathfinding_service.get_navigable_locations(floor)
+        print(f"🗺️ NAVIGABLE LOCATIONS: Floor {floor} - {len(locations)} locations")
+        return jsonify(locations)
+    except Exception as e:
+        print(f"❌ GET NAVIGABLE LOCATIONS ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/navigation/locations/all', methods=['GET'])
+def get_all_navigable_locations():
+    """
+    Get only nodes that have dataset_location set (navigable destinations) across all floors
+    Returns: [{
+        'location_name': str,
+        'node_id': str,
+        'x': float,
+        'y': float,
+        'floor': int,
+        'record_count': int
+    }]
+    """
+    try:
+        locations = pathfinding_service.get_navigable_locations()
+        print(f"🗺️ ALL NAVIGABLE LOCATIONS: {len(locations)} locations across all floors")
+        return jsonify(locations)
+    except Exception as e:
+        print(f"❌ GET ALL NAVIGABLE LOCATIONS ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
         return jsonify({'success': True, 'message': 'Location linked to node'})
         
     except Exception as e:

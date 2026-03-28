@@ -11,6 +11,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'api_service.dart';
 import 'app_state.dart';
 import 'navigation_service.dart';
+import 'models/graph_models.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({Key? key}) : super(key: key);
@@ -22,13 +23,22 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   final TextEditingController _searchController = TextEditingController();
 
-  Map<String, Offset> roomPositions = {};
+  // NEW: Navigable locations (dataset-mapped nodes)
+  List<NavigableLocation> _navigableLocations = [];
+  List<NavigableLocation> _allNavigableLocations = [];
+  
   String selectedDestination = '';
   String predictedRoom = '';
   String currentFloor = '1';
+  
+  // NEW: Current location info from WiFi prediction
+  bool _isNavigable = false;
+  double? _currentNodeX;
+  double? _currentNodeY;
 
   late AnimationController _userMarkerController;
   late AnimationController _destMarkerController;
+  late AnimationController _pathAnimationController;
 
   bool _isTesting = false;
   Timer? _testTimer;
@@ -42,6 +52,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   List<Offset> _shortestPath = [];
 
   Uint8List? _mapImageBytes;
+  Size? _imageSize;
 
   Future<void> _fetchMapBytes() async {
     setState(() {
@@ -58,6 +69,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
            _mapImageBytes = bytes;
            _isLoading = false;
          });
+         _calculateImageSize(bytes);
       } catch (e) {
         setState(() {
           _errorMessage = "Decoding error: $e";
@@ -70,6 +82,20 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _isLoading = false;
       });
     }
+  }
+
+  void _calculateImageSize(Uint8List bytes) {
+    final image = Image.memory(bytes);
+    image.image.resolve(const ImageConfiguration()).addListener(
+      ImageStreamListener((info, _) {
+        if (mounted) {
+          setState(() => _imageSize = Size(
+            info.image.width.toDouble(),
+            info.image.height.toDouble(),
+          ));
+        }
+      }),
+    );
   }
 
   void _initAnimations() {
@@ -86,27 +112,40 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       lowerBound: 0.7,
       upperBound: 1.0,
     )..repeat(reverse: true);
+
+    _pathAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    );
   }
 
   Future<void> _loadFloorData() async {
     try {
-      final uri = Uri.parse('${ApiService.baseUrl}/admin/locations/$currentFloor');
-      final resp = await http.get(uri);
-      if (resp.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(resp.body);
-        setState(() {
-          roomPositions = {
-            for (var loc in data)
-              loc['name']: Offset(loc['x'].toDouble(), loc['y'].toDouble())
-          };
-          _navigationService.initGraph(roomPositions);
-          if (roomPositions.isNotEmpty && predictedRoom.isEmpty) {
-            predictedRoom = roomPositions.keys.first;
-          }
-        });
-      }
+      // Load navigable locations for current floor
+      final locationsData = await ApiService.getNavigableLocations(int.parse(currentFloor));
+      setState(() {
+        _navigableLocations = locationsData
+            .map((data) => NavigableLocation.fromJson(data))
+            .toList();
+      });
+      print('📍 Loaded ${_navigableLocations.length} navigable locations for floor $currentFloor');
     } catch (e) {
       print('Error loading floor data: $e');
+    }
+  }
+
+  Future<void> _loadAllNavigableLocations() async {
+    try {
+      // Load navigable locations across all floors for search
+      final locationsData = await ApiService.getAllNavigableLocations();
+      setState(() {
+        _allNavigableLocations = locationsData
+            .map((data) => NavigableLocation.fromJson(data))
+            .toList();
+      });
+      print('📍 Loaded ${_allNavigableLocations.length} navigable locations across all floors');
+    } catch (e) {
+      print('Error loading all navigable locations: $e');
     }
   }
 
@@ -153,31 +192,30 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     
     if (result != null) {
       final String predicted = result['predicted']!;
-      final String source = result['source']!;
-      String displayedRoom = predicted;
-
-      if (!roomPositions.containsKey(displayedRoom)) {
-        if (roomPositions.isNotEmpty) {
-           displayedRoom = roomPositions.keys.first;
-        }
-      }
-
+      final bool isNavigable = result['is_navigable'] ?? false;
+      final double? nodeX = result['node_x'];
+      final double? nodeY = result['node_y'];
+      
       setState(() {
-        predictedRoom = displayedRoom;
+        predictedRoom = predicted;
+        _isNavigable = isNavigable;
+        _currentNodeX = nodeX;
+        _currentNodeY = nodeY;
       });
 
-      if (roomPositions.containsKey(displayedRoom)) {
-         _userMarkerController.forward(from: 0.7);
-         _animateToLocation(roomPositions[displayedRoom]!);
+      if (isNavigable && nodeX != null && nodeY != null && _imageSize != null) {
+        final pixelPos = Offset(nodeX * _imageSize!.width, nodeY * _imageSize!.height);
+        _userMarkerController.forward(from: 0.7);
+        _animateToLocation(pixelPos);
       }
       
-      String msg = 'Ground Truth: $sourceLocName\nAI Predicted: $predicted';
+      String msg = 'Ground Truth: $sourceLocName\nAI Predicted: $predicted\n${isNavigable ? "✓ Navigable" : "⚠ Not mapped"}';
       
       Fluttertoast.showToast(
         msg: "$msg", 
         toastLength: Toast.LENGTH_LONG, 
         gravity: ToastGravity.BOTTOM, 
-        backgroundColor: Colors.indigo,
+        backgroundColor: isNavigable ? Colors.indigo : Colors.orange,
         textColor: Colors.white
       );
     } else {
@@ -206,8 +244,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     super.initState();
     _initAnimations();
     _loadFloorData();
+    _loadAllNavigableLocations();
     _fetchMapBytes();
-    _fetchAllLocations();
     _checkWifiStatus();
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen((results) {
       setState(() {
@@ -267,10 +305,26 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     if (result != null) {
       final String predicted = result['predicted']!;
-      setState(() => predictedRoom = predicted);
-      if (roomPositions.containsKey(predicted)) {
+      final bool isNavigable = result['is_navigable'] ?? false;
+      final double? nodeX = result['node_x'];
+      final double? nodeY = result['node_y'];
+      final int? floor = result['floor'];
+      
+      setState(() {
+        predictedRoom = predicted;
+        _isNavigable = isNavigable;
+        _currentNodeX = nodeX;
+        _currentNodeY = nodeY;
+      });
+      
+      if (isNavigable && nodeX != null && nodeY != null && _imageSize != null) {
+        // Animate to the graph node position
+        final pixelPos = Offset(nodeX * _imageSize!.width, nodeY * _imageSize!.height);
         _userMarkerController.forward(from: 0.7);
-        _animateToLocation(roomPositions[predicted]!);
+        _animateToLocation(pixelPos);
+      } else {
+        // Location not mapped - show warning
+        print('⚠️ Location "$predicted" is not mapped to navigation graph');
       }
     }
   }
@@ -290,6 +344,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       ..scale(targetScale);
 
     _transformationController.value = endMatrix;
+  }    _transformationController.value = endMatrix;
   }
 
   @override
@@ -298,16 +353,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _searchController.dispose();
     _userMarkerController.dispose();
     _destMarkerController.dispose();
+    _pathAnimationController.dispose();
     _testTimer?.cancel();
     _transformationController.dispose();
     super.dispose();
-  }
-
-  List<dynamic> _allLocations = [];
-
-  Future<void> _fetchAllLocations() async {
-    final locs = await ApiService.getAllLocations();
-    setState(() => _allLocations = locs);
   }
 
   void _changeFloor(String floor) {
@@ -315,8 +364,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       currentFloor = floor;
       predictedRoom = '';
       _mapImageBytes = null;
-      roomPositions.clear();
+      _navigableLocations.clear();
       _shortestPath = [];
+      _isNavigable = false;
+      _currentNodeX = null;
+      _currentNodeY = null;
     });
     _loadFloorData();
     _fetchMapBytes();
@@ -379,18 +431,17 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Autocomplete<Map<String, dynamic>>(
+                  child: Autocomplete<NavigableLocation>(
                     optionsBuilder: (textValue) {
-                      if (_allLocations.isEmpty) return const Iterable<Map<String, dynamic>>.empty();
+                      if (_allNavigableLocations.isEmpty) return const Iterable<NavigableLocation>.empty();
                       final query = textValue.text.toLowerCase();
-                      final matches = _allLocations.where((loc) {
-                        final name = loc['name'] as String;
-                        return name.toLowerCase().contains(query) && roomPositions.containsKey(name);
+                      final matches = _allNavigableLocations.where((loc) {
+                        return loc.locationName.toLowerCase().contains(query);
                       }).toList();
-                      matches.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
-                      return matches.cast<Map<String, dynamic>>();
+                      matches.sort((a, b) => a.locationName.compareTo(b.locationName));
+                      return matches;
                     },
-                    displayStringForOption: (option) => option['name'],
+                    displayStringForOption: (option) => option.locationName,
                     optionsViewBuilder: (context, onSelected, options) {
                       return Align(
                         alignment: Alignment.topLeft,
@@ -399,7 +450,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                           borderRadius: BorderRadius.circular(12),
                           color: const Color(0xFF132F4C),
                           child: ConstrainedBox(
-                           constraints: const BoxConstraints(maxHeight: 300, maxWidth: 300), 
+                           constraints: const BoxConstraints(maxHeight: 300, maxWidth: 350), 
                            child: ListView.separated(
                              padding: EdgeInsets.zero,
                              shrinkWrap: true,
@@ -409,8 +460,31 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                                 final option = options.elementAt(index);
                                 return ListTile(
                                   dense: true,
-                                  title: Text(option['name'], style: const TextStyle(fontWeight: FontWeight.w500, color: Colors.white)),
-                                  subtitle: Text('Floor ${option['floor']}', style: TextStyle(fontSize: 10, color: Colors.white.withOpacity(0.6))),
+                                  title: Text(
+                                    option.locationName,
+                                    style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white),
+                                  ),
+                                  subtitle: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF2979FF).withOpacity(0.2),
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(color: const Color(0xFF2979FF), width: 1),
+                                        ),
+                                        child: Text(
+                                          'Floor ${option.floor}',
+                                          style: const TextStyle(fontSize: 10, color: Color(0xFF2979FF), fontWeight: FontWeight.w600),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        '${option.recordCount} records',
+                                        style: TextStyle(fontSize: 10, color: Colors.white.withOpacity(0.5)),
+                                      ),
+                                    ],
+                                  ),
                                   onTap: () => onSelected(option),
                                 );
                              },
@@ -420,21 +494,23 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       );
                     },
                     onSelected: (selection) {
-                      final targetFloor = selection['floor']?.toString() ?? '1';
+                      final targetFloor = selection.floor.toString();
                       if (targetFloor != currentFloor) {
                          _changeFloor(targetFloor);
                          Future.delayed(const Duration(milliseconds: 500), () {
-                            if (roomPositions.containsKey(selection['name'])) {
-                               _animateToLocation(roomPositions[selection['name']]!);
+                            if (_imageSize != null) {
+                               final pixelPos = selection.toPixelOffset(_imageSize!);
+                               _animateToLocation(pixelPos);
                             }
                          });
                       } else {
-                         if (roomPositions.containsKey(selection['name'])) {
-                            _animateToLocation(roomPositions[selection['name']]!);
+                         if (_imageSize != null) {
+                            final pixelPos = selection.toPixelOffset(_imageSize!);
+                            _animateToLocation(pixelPos);
                          }
                       }
                       setState(() {
-                        selectedDestination = selection['name'];
+                        selectedDestination = selection.locationName;
                         _shortestPath = [];
                       });
                       _destMarkerController.forward(from: 0.7);
@@ -445,7 +521,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         focusNode: fnode,
                         style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white),
                         decoration: InputDecoration(
-                          hintText: 'Search locations...',
+                          hintText: 'Search navigable locations...',
                           hintStyle: TextStyle(color: Colors.white.withOpacity(0.5)),
                           border: InputBorder.none,
                           prefixIcon: const Icon(Icons.search, color: Color(0xFF2979FF)),
@@ -527,8 +603,9 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
               child: Icon(_wifiDisabled ? Icons.signal_wifi_off : Icons.my_location, color: Colors.white),
               onPressed: () {
                  _locateUser();
-                 if (predictedRoom.isNotEmpty && roomPositions.containsKey(predictedRoom)) {
-                   _animateToLocation(roomPositions[predictedRoom]!);
+                 if (_isNavigable && _currentNodeX != null && _currentNodeY != null && _imageSize != null) {
+                   final pixelPos = Offset(_currentNodeX! * _imageSize!.width, _currentNodeY! * _imageSize!.height);
+                   _animateToLocation(pixelPos);
                  }
               },
             ),
@@ -562,27 +639,30 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   else
                     const SizedBox(width: 2000, height: 2000),
                   
-                  // All Marked Locations (Subtle Dots)
-                  ...roomPositions.entries.where((e) => e.key != predictedRoom && e.key != selectedDestination).map((entry) {
-                    return Positioned(
-                      left: entry.value.dx - 4,
-                      top: entry.value.dy - 4,
-                      child: Container(
-                        width: 8, height: 8,
-                        decoration: BoxDecoration(
-                          color: Colors.indigo.withOpacity(0.4),
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
+                  // All Navigable Locations (Purple Dots)
+                  if (_imageSize != null)
+                    ..._navigableLocations.where((loc) => loc.locationName != predictedRoom && loc.locationName != selectedDestination).map((loc) {
+                      final pixelPos = loc.toPixelOffset(_imageSize!);
+                      return Positioned(
+                        left: pixelPos.dx - 4,
+                        top: pixelPos.dy - 4,
+                        child: Container(
+                          width: 8, height: 8,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF7C4DFF).withOpacity(0.4),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
+                          ),
                         ),
-                      ),
-                    );
-                  }).toList(),
+                      );
+                    }).toList(),
 
-                  if (predictedRoom.isNotEmpty && roomPositions.containsKey(predictedRoom))
+                  // Current Location Marker (Blue Person Pin)
+                  if (_isNavigable && _currentNodeX != null && _currentNodeY != null && _imageSize != null)
                     AnimatedBuilder(
                       animation: _userMarkerController,
                       builder: (ctx, child) {
-                        final pos = roomPositions[predictedRoom]!;
+                        final pos = Offset(_currentNodeX! * _imageSize!.width, _currentNodeY! * _imageSize!.height);
                         return Positioned(
                           left: pos.dx - 24, top: pos.dy - 48,
                           child: Transform.scale(scale: _userMarkerController.value, alignment: Alignment.bottomCenter, child: const Icon(Icons.person_pin_circle, color: Colors.blueAccent, size: 48)),
@@ -590,46 +670,120 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                       },
                     ),
 
-                  if (selectedDestination.isNotEmpty && roomPositions.containsKey(selectedDestination))
-                    AnimatedBuilder(
-                      animation: _destMarkerController,
-                      builder: (ctx, child) {
-                        final pos = roomPositions[selectedDestination]!;
-                        return Positioned(
-                          left: pos.dx - 24, top: pos.dy - 48,
-                          child: Transform.scale(scale: _destMarkerController.value, alignment: Alignment.bottomCenter, child: const Icon(Icons.flag, color: Colors.redAccent, size: 48)),
+                  // Destination Marker (Red Flag)
+                  if (selectedDestination.isNotEmpty && _imageSize != null)
+                    Builder(
+                      builder: (context) {
+                        final destLocation = _navigableLocations.firstWhere(
+                          (loc) => loc.locationName == selectedDestination,
+                          orElse: () => _allNavigableLocations.firstWhere(
+                            (loc) => loc.locationName == selectedDestination,
+                            orElse: () => NavigableLocation(locationName: '', nodeId: '', x: 0, y: 0, floor: 0, recordCount: 0),
+                          ),
+                        );
+                        if (destLocation.nodeId.isEmpty) return const SizedBox.shrink();
+                        
+                        return AnimatedBuilder(
+                          animation: _destMarkerController,
+                          builder: (ctx, child) {
+                            final pos = destLocation.toPixelOffset(_imageSize!);
+                            return Positioned(
+                              left: pos.dx - 24, top: pos.dy - 48,
+                              child: Transform.scale(scale: _destMarkerController.value, alignment: Alignment.bottomCenter, child: const Icon(Icons.flag, color: Colors.redAccent, size: 48)),
+                            );
+                          },
                         );
                       },
                     ),
 
+                  // Animated Path
                   if (_shortestPath.isNotEmpty)
-                    CustomPaint(size: Size.infinite, painter: PathPainter(_shortestPath))
-                  else if (selectedDestination.isNotEmpty && roomPositions.containsKey(predictedRoom) && roomPositions.containsKey(selectedDestination))
-                    CustomPaint(size: Size.infinite, painter: SimplePathPainter(start: roomPositions[predictedRoom]!, end: roomPositions[selectedDestination]!)),
+                    CustomPaint(size: Size.infinite, painter: AnimatedPathPainter(_shortestPath, _pathAnimationController)),
                 ],
               ),
             ),
-            Positioned(
-              left: 16, right: 16, bottom: 75,
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF132F4C),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.1),
-                    width: 1,
+            // Current Location Info Card
+            if (predictedRoom.isNotEmpty)
+              Positioned(
+                left: 16, right: 16, bottom: selectedDestination.isEmpty ? 24 : 140,
+                child: Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF132F4C),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.1),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.location_on, color: Color(0xFF2979FF), size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Current: $predictedRoom',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      if (_isNavigable)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF00C853).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFF00C853), width: 1),
+                          ),
+                          child: const Text(
+                            'Navigable',
+                            style: TextStyle(fontSize: 11, color: Color(0xFF00C853), fontWeight: FontWeight.w600),
+                          ),
+                        )
+                      else
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFF6D00).withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFFFF6D00), width: 1),
+                              ),
+                              child: const Text(
+                                'Not mapped',
+                                style: TextStyle(fontSize: 11, color: Color(0xFFFF6D00), fontWeight: FontWeight.w600),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            GestureDetector(
+                              onTap: () {
+                                showDialog(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    backgroundColor: const Color(0xFF132F4C),
+                                    title: const Text('Location Not Mapped', style: TextStyle(color: Colors.white)),
+                                    content: const Text(
+                                      'This location was predicted but has no position on the map. The admin needs to assign this location to a graph node in Floor Plan Management.',
+                                      style: TextStyle(color: Colors.white70),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context),
+                                        child: const Text('OK', style: TextStyle(color: Color(0xFF2979FF))),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                              child: Icon(Icons.info_outline, color: const Color(0xFFFF6D00).withOpacity(0.8), size: 18),
+                            ),
+                          ],
+                        ),
+                    ],
                   ),
                 ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.location_on, color: Color(0xFF2979FF), size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text('Current Location: ${predictedRoom.isEmpty ? 'Unknown' : predictedRoom}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600))),
-                  ],
-                ),
               ),
-            ),
             if (selectedDestination.isNotEmpty) _buildDirectionsBanner(),
           ],
         ),
@@ -709,17 +863,207 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     );
   }
 
-  void _getDirections() {
-    if (predictedRoom.isEmpty || selectedDestination.isEmpty) return;
-    _navigationService.initGraph(roomPositions);
-    final path = _navigationService.findShortestPath(predictedRoom, selectedDestination);
-    if (path.isNotEmpty) {
-      setState(() => _shortestPath = path);
-      Fluttertoast.showToast(msg: "Calculating shortest route...", backgroundColor: Colors.indigo, textColor: Colors.white);
-    } else {
-      Fluttertoast.showToast(msg: "No path found between locations");
+  Future<void> _getDirections() async {
+    // Check if current location is set
+    if (predictedRoom.isEmpty) {
+      Fluttertoast.showToast(
+        msg: "Scan WiFi first to detect your location",
+        backgroundColor: Colors.orange,
+        textColor: Colors.white,
+      );
+      return;
+    }
+    
+    if (selectedDestination.isEmpty) return;
+    
+    try {
+      // Call graph-based pathfinding API
+      final uri = Uri.parse('${ApiService.baseUrl}/navigation/path');
+      final resp = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'floor': int.parse(currentFloor),
+          'from_location': predictedRoom,
+          'to_location': selectedDestination,
+        }),
+      );
+      
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        
+        if (data['found'] == true) {
+          // Path found - convert and display
+          if (_imageSize != null) {
+            // Convert normalized coordinates to pixel coordinates
+            final pathNodes = (data['path_nodes'] as List).map((n) {
+              return Offset(
+                n['x'] * _imageSize!.width,
+                n['y'] * _imageSize!.height,
+              );
+            }).toList();
+            
+            setState(() => _shortestPath = pathNodes);
+            
+            // Animate the path
+            _pathAnimationController.reset();
+            _pathAnimationController.forward();
+            
+            final seconds = data['estimated_seconds'] ?? 0;
+            final minutes = (seconds / 60).ceil();
+            
+            Fluttertoast.showToast(
+              msg: "Route found! Estimated time: ${minutes}min",
+              backgroundColor: const Color(0xFF00C853),
+              textColor: Colors.white,
+            );
+          }
+        } else {
+          // No path found - check reason
+          setState(() => _shortestPath = []);
+          final reason = data['reason'] ?? '';
+          
+          if (reason == 'location_not_mapped') {
+            Fluttertoast.showToast(
+              msg: "One or more locations are not mapped to the navigation graph. Ask admin to assign nodes.",
+              toastLength: Toast.LENGTH_LONG,
+              backgroundColor: Colors.orange,
+              textColor: Colors.white,
+            );
+          } else {
+            Fluttertoast.showToast(
+              msg: "No walkable path found between these locations.",
+              toastLength: Toast.LENGTH_LONG,
+              backgroundColor: Colors.orange,
+              textColor: Colors.white,
+            );
+          }
+        }
+      } else {
+        // API error
+        Fluttertoast.showToast(
+          msg: "Failed to calculate route. Please try again.",
+          backgroundColor: Colors.red,
+          textColor: Colors.white,
+        );
+      }
+    } catch (e) {
+      print('Pathfinding error: $e');
+      Fluttertoast.showToast(
+        msg: "Failed to calculate route: $e",
+        backgroundColor: Colors.red,
+        textColor: Colors.white,
+      );
+    }
+  }    }
+  }
+}
+
+// Animated Path Painter with progressive drawing
+class AnimatedPathPainter extends CustomPainter {
+  final List<Offset> points;
+  final Animation<double> animation;
+
+  AnimatedPathPainter(this.points, this.animation) : super(repaint: animation);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.length < 2) return;
+
+    // Create the full path
+    final path = Path();
+    path.moveTo(points[0].dx, points[0].dy);
+    for (int i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
+    }
+
+    final pathMetrics = path.computeMetrics().first;
+    final totalLength = pathMetrics.length;
+    final currentLength = totalLength * animation.value;
+
+    // Draw the animated path segment
+    final extractedPath = pathMetrics.extractPath(0, currentLength);
+
+    // Shadow
+    final shadowPaint = Paint()
+      ..color = const Color(0xFF00BCD4).withOpacity(0.3)
+      ..strokeWidth = 8
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    canvas.drawPath(extractedPath, shadowPaint);
+
+    // Main path line (teal)
+    final pathPaint = Paint()
+      ..color = const Color(0xFF00BCD4)
+      ..strokeWidth = 4
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    canvas.drawPath(extractedPath, pathPaint);
+
+    // Draw waypoint dots at intermediate nodes (only for completed segments)
+    for (int i = 1; i < points.length - 1; i++) {
+      final pointDistance = _calculatePathDistance(points.sublist(0, i + 1));
+      if (pointDistance <= currentLength) {
+        final dotPaint = Paint()..color = Colors.white..style = PaintingStyle.fill;
+        canvas.drawCircle(points[i], 4, dotPaint);
+        
+        // Dot border
+        final borderPaint = Paint()
+          ..color = const Color(0xFF00BCD4)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2;
+        canvas.drawCircle(points[i], 4, borderPaint);
+      }
+    }
+
+    // Draw "you are here" marker at start (blue dot with radiating circle)
+    if (animation.value > 0) {
+      final startPaint = Paint()..color = const Color(0xFF2979FF)..style = PaintingStyle.fill;
+      canvas.drawCircle(points[0], 8, startPaint);
+      
+      // Radiating circle
+      final radiatingPaint = Paint()
+        ..color = const Color(0xFF2979FF).withOpacity(0.3)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2;
+      canvas.drawCircle(points[0], 12 + (animation.value * 4), radiatingPaint);
+    }
+
+    // Draw destination marker (pulsing green circle with location pin)
+    if (animation.value >= 1.0 && points.isNotEmpty) {
+      final destPoint = points.last;
+      
+      // Pulsing circle
+      final pulseValue = (DateTime.now().millisecondsSinceEpoch % 1000) / 1000.0;
+      final pulseRadius = 16 + (pulseValue * 8);
+      final pulsePaint = Paint()
+        ..color = const Color(0xFF00C853).withOpacity(0.3 - (pulseValue * 0.2))
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(destPoint, pulseRadius, pulsePaint);
+      
+      // Solid circle
+      final destPaint = Paint()..color = const Color(0xFF00C853)..style = PaintingStyle.fill;
+      canvas.drawCircle(destPoint, 12, destPaint);
+      
+      // White center
+      final centerPaint = Paint()..color = Colors.white..style = PaintingStyle.fill;
+      canvas.drawCircle(destPoint, 6, centerPaint);
     }
   }
+
+  double _calculatePathDistance(List<Offset> pathPoints) {
+    double distance = 0;
+    for (int i = 1; i < pathPoints.length; i++) {
+      distance += (pathPoints[i] - pathPoints[i - 1]).distance;
+    }
+    return distance;
+  }
+
+  @override
+  bool shouldRepaint(covariant AnimatedPathPainter oldDelegate) => true;
 }
 
 class PathPainter extends CustomPainter {

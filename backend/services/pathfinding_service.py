@@ -17,7 +17,7 @@ class PathfindingService:
         """
         Load graph from MongoDB and build adjacency structure
         Returns: {
-            'nodes': {node_id: {'x': float, 'y': float, 'label': str}},
+            'nodes': {node_id: {'x': float, 'y': float, 'label': str, 'dataset_location': str}},
             'adjacency': {node_id: [(neighbor_id, weight), ...]},
             'raw': original document
         }
@@ -36,7 +36,8 @@ class PathfindingService:
                 nodes[node_id] = {
                     'x': node['x'],
                     'y': node['y'],
-                    'label': node.get('label', '')
+                    'label': node.get('label', ''),
+                    'dataset_location': node.get('dataset_location', None)
                 }
                 adjacency[node_id] = []
             
@@ -80,6 +81,13 @@ class PathfindingService:
                 nearest_id = node_id
         
         return nearest_id
+    
+    def find_node_by_dataset_location(self, nodes: Dict, dataset_location: str) -> Optional[str]:
+        """Find node ID that has the given dataset_location assigned"""
+        for node_id, node_data in nodes.items():
+            if node_data.get('dataset_location') == dataset_location:
+                return node_id
+        return None
     
     def dijkstra(self, adjacency: Dict, start_node: str, end_node: str) -> Optional[List[str]]:
         """
@@ -134,12 +142,17 @@ class PathfindingService:
     
     def calculate_path(self, floor: int, from_location: str, to_location: str) -> Dict:
         """
-        Calculate shortest path between two locations
+        Calculate shortest path between two dataset locations
+        Args:
+            floor: Floor number
+            from_location: Dataset location name (from training_data_records)
+            to_location: Dataset location name (from training_data_records)
         Returns: {
             'path_nodes': [{'x': float, 'y': float}, ...],
             'total_distance': float,
             'estimated_seconds': int,
-            'found': bool
+            'found': bool,
+            'reason': str (if not found)
         }
         """
         try:
@@ -151,46 +164,35 @@ class PathfindingService:
                     'total_distance': 0,
                     'estimated_seconds': 0,
                     'found': False,
+                    'reason': 'no_graph',
                     'error': 'No walkable graph found for this floor'
                 }
             
             nodes = graph['nodes']
             adjacency = graph['adjacency']
             
-            # Get location coordinates
-            from_loc = db.locations.find_one({'floor': str(floor), 'name': from_location})
-            to_loc = db.locations.find_one({'floor': str(floor), 'name': to_location})
+            # Find nodes by dataset_location
+            start_node = self.find_node_by_dataset_location(nodes, from_location)
+            end_node = self.find_node_by_dataset_location(nodes, to_location)
             
-            if not from_loc or not to_loc:
+            if not start_node:
                 return {
                     'path_nodes': [],
                     'total_distance': 0,
                     'estimated_seconds': 0,
                     'found': False,
-                    'error': 'Location not found'
+                    'reason': 'location_not_mapped',
+                    'error': f'Start location "{from_location}" is not mapped to any graph node'
                 }
             
-            # Find start and end nodes
-            # Use node_id if set, otherwise find nearest node
-            if from_loc.get('node_id') and from_loc['node_id'] in nodes:
-                start_node = from_loc['node_id']
-            else:
-                # Normalize coordinates (assuming locations store pixel coords)
-                # We'll need map dimensions - for now use direct lookup
-                start_node = self.find_nearest_node(nodes, from_loc['x'], from_loc['y'])
-            
-            if to_loc.get('node_id') and to_loc['node_id'] in nodes:
-                end_node = to_loc['node_id']
-            else:
-                end_node = self.find_nearest_node(nodes, to_loc['x'], to_loc['y'])
-            
-            if not start_node or not end_node:
+            if not end_node:
                 return {
                     'path_nodes': [],
                     'total_distance': 0,
                     'estimated_seconds': 0,
                     'found': False,
-                    'error': 'Could not find nodes near locations'
+                    'reason': 'location_not_mapped',
+                    'error': f'Destination "{to_location}" is not mapped to any graph node'
                 }
             
             # Run Dijkstra
@@ -202,7 +204,8 @@ class PathfindingService:
                     'total_distance': 0,
                     'estimated_seconds': 0,
                     'found': False,
-                    'error': 'No path found between locations'
+                    'reason': 'no_path',
+                    'error': 'No walkable path found between locations'
                 }
             
             # Convert node IDs to coordinates
@@ -240,6 +243,7 @@ class PathfindingService:
                 'total_distance': 0,
                 'estimated_seconds': 0,
                 'found': False,
+                'reason': 'error',
                 'error': str(e)
             }
     
@@ -293,6 +297,248 @@ class PathfindingService:
         except Exception as e:
             print(f"Error deleting graph: {e}")
             return False
+    
+    def get_dataset_locations(self, floor: int) -> List[Dict]:
+        """
+        Get all distinct dataset locations for a floor with assignment status
+        Returns: [{
+            'location': str,
+            'floor': int,
+            'record_count': int,
+            'assigned_node_id': str or None,
+            'is_assigned': bool
+        }]
+        """
+        try:
+            # Get distinct locations from training_data_records
+            pipeline = [
+                {'$match': {'floor': floor}},
+                {'$group': {
+                    '_id': '$location',
+                    'count': {'$sum': 1}
+                }},
+                {'$sort': {'_id': 1}}
+            ]
+            
+            locations = list(db.training_data_records.aggregate(pipeline))
+            
+            # Get graph to check assignments
+            graph = self.build_graph(floor)
+            location_to_node = {}
+            
+            if graph:
+                for node_id, node_data in graph['nodes'].items():
+                    dataset_loc = node_data.get('dataset_location')
+                    if dataset_loc:
+                        location_to_node[dataset_loc] = node_id
+            
+            # Build result
+            result = []
+            for loc in locations:
+                location_name = loc['_id']
+                assigned_node_id = location_to_node.get(location_name)
+                
+                result.append({
+                    'location': location_name,
+                    'floor': floor,
+                    'record_count': loc['count'],
+                    'assigned_node_id': assigned_node_id,
+                    'is_assigned': assigned_node_id is not None
+                })
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error getting dataset locations: {e}")
+            return []
+    
+    def assign_dataset_location(self, floor: int, node_id: str, dataset_location: str) -> Dict:
+        """
+        Assign a dataset location to a node
+        Ensures uniqueness: only one node per floor can have a given dataset_location
+        Returns: {
+            'success': bool,
+            'message': str,
+            'previous_node_id': str or None
+        }
+        """
+        try:
+            # Check if another node already has this dataset_location
+            graph_doc = db.walkable_graph.find_one({'floor': floor})
+            if not graph_doc:
+                return {
+                    'success': False,
+                    'message': 'No graph found for this floor',
+                    'previous_node_id': None
+                }
+            
+            previous_node_id = None
+            nodes = graph_doc.get('nodes', [])
+            
+            # Find and unassign previous node with this dataset_location
+            for node in nodes:
+                if node.get('dataset_location') == dataset_location and node['id'] != node_id:
+                    previous_node_id = node['id']
+                    node['dataset_location'] = None
+                    break
+            
+            # Assign to target node
+            target_node_found = False
+            for node in nodes:
+                if node['id'] == node_id:
+                    node['dataset_location'] = dataset_location
+                    target_node_found = True
+                    break
+            
+            if not target_node_found:
+                return {
+                    'success': False,
+                    'message': f'Node {node_id} not found in graph',
+                    'previous_node_id': None
+                }
+            
+            # Save updated graph
+            db.walkable_graph.update_one(
+                {'floor': floor},
+                {'$set': {'nodes': nodes}}
+            )
+            
+            # Clear cache
+            if floor in self.graphs_cache:
+                del self.graphs_cache[floor]
+            
+            message = f'Assigned "{dataset_location}" to node {node_id}'
+            if previous_node_id:
+                message += f' (unassigned from {previous_node_id})'
+            
+            return {
+                'success': True,
+                'message': message,
+                'previous_node_id': previous_node_id
+            }
+            
+        except Exception as e:
+            print(f"Error assigning dataset location: {e}")
+            return {
+                'success': False,
+                'message': str(e),
+                'previous_node_id': None
+            }
+    
+    def unassign_dataset_location(self, floor: int, node_id: str) -> Dict:
+        """
+        Remove dataset_location assignment from a node
+        Returns: {'success': bool, 'message': str}
+        """
+        try:
+            graph_doc = db.walkable_graph.find_one({'floor': floor})
+            if not graph_doc:
+                return {
+                    'success': False,
+                    'message': 'No graph found for this floor'
+                }
+            
+            nodes = graph_doc.get('nodes', [])
+            node_found = False
+            
+            for node in nodes:
+                if node['id'] == node_id:
+                    node['dataset_location'] = None
+                    node_found = True
+                    break
+            
+            if not node_found:
+                return {
+                    'success': False,
+                    'message': f'Node {node_id} not found in graph'
+                }
+            
+            # Save updated graph
+            db.walkable_graph.update_one(
+                {'floor': floor},
+                {'$set': {'nodes': nodes}}
+            )
+            
+            # Clear cache
+            if floor in self.graphs_cache:
+                del self.graphs_cache[floor]
+            
+            return {
+                'success': True,
+                'message': f'Unassigned dataset location from node {node_id}'
+            }
+            
+        except Exception as e:
+            print(f"Error unassigning dataset location: {e}")
+            return {
+                'success': False,
+                'message': str(e)
+            }
+    
+    def get_navigable_locations(self, floor: Optional[int] = None) -> List[Dict]:
+        """
+        Get only nodes that have dataset_location assigned (navigable destinations)
+        Args:
+            floor: Specific floor number, or None for all floors
+        Returns: [{
+            'location_name': str,
+            'node_id': str,
+            'x': float,
+            'y': float,
+            'floor': int,
+            'record_count': int
+        }]
+        """
+        try:
+            result = []
+            
+            # Determine which floors to query
+            if floor is not None:
+                floors = [floor]
+            else:
+                # Get all floors that have graphs
+                graph_docs = db.walkable_graph.find({}, {'floor': 1})
+                floors = [doc['floor'] for doc in graph_docs]
+            
+            for floor_num in floors:
+                graph = self.build_graph(floor_num)
+                if not graph:
+                    continue
+                
+                # Get record counts for this floor
+                pipeline = [
+                    {'$match': {'floor': floor_num}},
+                    {'$group': {
+                        '_id': '$location',
+                        'count': {'$sum': 1}
+                    }}
+                ]
+                location_counts = {
+                    item['_id']: item['count']
+                    for item in db.training_data_records.aggregate(pipeline)
+                }
+                
+                # Find nodes with dataset_location assigned
+                for node_id, node_data in graph['nodes'].items():
+                    dataset_loc = node_data.get('dataset_location')
+                    if dataset_loc:
+                        result.append({
+                            'location_name': dataset_loc,
+                            'node_id': node_id,
+                            'x': node_data['x'],
+                            'y': node_data['y'],
+                            'floor': floor_num,
+                            'record_count': location_counts.get(dataset_loc, 0)
+                        })
+            
+            # Sort by floor then location name
+            result.sort(key=lambda x: (x['floor'], x['location_name']))
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error getting navigable locations: {e}")
+            return []
 
 
 # Singleton instance
