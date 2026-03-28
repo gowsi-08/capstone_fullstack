@@ -184,7 +184,7 @@ def training_stats():
         from services.database import get_db
         
         db = get_db()
-        training_collection = db['training_data']
+        training_collection = db['training_data_records']
         
         # Get total count
         total_rows = training_collection.count_documents({})
@@ -308,15 +308,15 @@ def get_training_records():
         
         query = {}
         if floor:
-            query['floor'] = str(floor)  # Floor is stored as string in training_data
+            query['floor'] = floor  # Floor is stored as int in training_data_records
         if location:
             query['location'] = {'$regex': location, '$options': 'i'}
         if source:
             query['source'] = source
         
         skip = (page - 1) * limit
-        total = db.training_data.count_documents(query)
-        records = list(db.training_data.find(query).skip(skip).limit(limit).sort('_id', -1))
+        total = db.training_data_records.count_documents(query)
+        records = list(db.training_data_records.find(query).skip(skip).limit(limit).sort('_id', -1))
         
         # Convert ObjectId to string
         for record in records:
@@ -343,7 +343,7 @@ def get_training_records_grouped():
         
         match_stage = {}
         if floor:
-            match_stage['floor'] = str(floor)  # Floor is stored as string
+            match_stage['floor'] = floor  # Floor is stored as int
         
         pipeline = [
             {'$match': match_stage} if match_stage else {'$match': {}},
@@ -351,12 +351,12 @@ def get_training_records_grouped():
                 '_id': {'location': '$location', 'floor': '$floor'},
                 'count': {'$sum': 1},
                 'bssids': {'$addToSet': '$bssid'},
-                'avg_signal': {'$avg': '$signal_strength'},
+                'avg_signal': {'$avg': '$signal'},
                 'records': {'$push': {
                     'id': {'$toString': '$_id'},
                     'bssid': '$bssid',
                     'ssid': '$ssid',
-                    'signal_strength': '$signal_strength',
+                    'signal_strength': '$signal',
                     'landmark': '$landmark',
                     'source': '$source'
                 }}
@@ -364,7 +364,7 @@ def get_training_records_grouped():
             {'$sort': {'_id.floor': 1, '_id.location': 1}}
         ]
         
-        results = list(db.training_data.aggregate(pipeline))
+        results = list(db.training_data_records.aggregate(pipeline))
         
         grouped = {}
         for item in results:
@@ -397,7 +397,7 @@ def get_training_locations():
             {'$sort': {'_id.floor': 1, '_id.location': 1}}
         ]
         
-        results = list(db.training_data.aggregate(pipeline))
+        results = list(db.training_data_records.aggregate(pipeline))
         locations = [
             {
                 'location': item['_id']['location'],
@@ -471,7 +471,7 @@ def update_training_record(record_id):
         data = request.get_json()
         updates = {}
         
-        allowed_fields = ['ssid', 'bssid', 'signal_strength', 'location', 'landmark', 'floor', 'source']
+        allowed_fields = ['ssid', 'bssid', 'signal', 'location', 'landmark', 'floor', 'source']
         for field in allowed_fields:
             if field in data:
                 updates[field] = data[field]
@@ -479,7 +479,7 @@ def update_training_record(record_id):
         if 'bssid' in updates:
             updates['bssid'] = updates['bssid'].lower()
         
-        result = db.training_data.update_one(
+        result = db.training_data_records.update_one(
             {'_id': ObjectId(record_id)},
             {'$set': updates}
         )
@@ -504,7 +504,7 @@ def update_training_records_bulk():
             return jsonify({'error': 'IDs and updates required'}), 400
         
         object_ids = [ObjectId(id) for id in ids]
-        result = db.training_data.update_many(
+        result = db.training_data_records.update_many(
             {'_id': {'$in': object_ids}},
             {'$set': updates}
         )
@@ -518,7 +518,7 @@ def update_training_records_bulk():
 def delete_training_record(record_id):
     """Delete single training record"""
     try:
-        result = db.training_data.delete_one({'_id': ObjectId(record_id)})
+        result = db.training_data_records.delete_one({'_id': ObjectId(record_id)})
         
         if result.deleted_count == 0:
             return jsonify({'error': 'Record not found'}), 404
@@ -539,7 +539,7 @@ def delete_training_records_bulk():
             return jsonify({'error': 'No IDs provided'}), 400
         
         object_ids = [ObjectId(id) for id in ids]
-        result = db.training_data.delete_many({'_id': {'$in': object_ids}})
+        result = db.training_data_records.delete_many({'_id': {'$in': object_ids}})
         
         return jsonify({'success': True, 'deleted': result.deleted_count})
     except Exception as e:
@@ -554,9 +554,9 @@ def delete_training_records_by_group(location):
         
         query = {'location': location}
         if floor:
-            query['floor'] = str(floor)  # Floor is stored as string
+            query['floor'] = floor  # Floor is stored as int
         
-        result = db.training_data.delete_many(query)
+        result = db.training_data_records.delete_many(query)
         return jsonify({'success': True, 'deleted': result.deleted_count})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -577,10 +577,10 @@ def merge_training_locations():
         
         query = {'location': {'$in': source_locations}}
         if floor:
-            query['floor'] = str(floor)  # Floor is stored as string
+            query['floor'] = floor  # Floor is stored as int
         
         # Update all matching records
-        result = db.training_data.update_many(
+        result = db.training_data_records.update_many(
             query,
             {'$set': {'location': target_location}}
         )
@@ -606,11 +606,11 @@ def export_training_records():
         
         query = {}
         if floor:
-            query['floor'] = str(floor)  # Floor is stored as string
+            query['floor'] = floor  # Floor is stored as int
         if source:
             query['source'] = source
         
-        records = list(db.training_data.find(query))
+        records = list(db.training_data_records.find(query))
         
         if not records:
             return jsonify({'error': 'No records found'}), 404
@@ -633,7 +633,7 @@ def export_training_records():
                 'BSSID': record.get('bssid', ''),
                 'Frequency (MHz)': record.get('frequency', ''),
                 'Bandwidth (MHz)': record.get('bandwidth', ''),
-                'Signal Strength dBm': record.get('signal_strength', ''),
+                'Signal Strength dBm': record.get('signal', ''),
                 'Estimated Distance m': record.get('estimated_distance', ''),
                 'Capabilities': record.get('capabilities', ''),
                 'Source': record.get('source', '')

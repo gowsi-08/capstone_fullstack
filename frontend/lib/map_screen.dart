@@ -350,6 +350,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             child: Row(
               children: [
                 PopupMenuButton<String>(
+                  color: const Color(0xFF132F4C),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
@@ -368,7 +369,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     ),
                   ),
                   onSelected: _changeFloor,
-                  itemBuilder: (context) => ['1', '2', '3'].map((f) => PopupMenuItem(value: f, child: Text('Floor $f'))).toList(),
+                  itemBuilder: (context) => ['1', '2', '3'].map((f) => PopupMenuItem(
+                    value: f,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      child: Text('Floor $f', style: const TextStyle(color: Colors.white)),
+                    ),
+                  )).toList(),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -463,6 +470,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 ],
                 // User menu with logout
                 PopupMenuButton<String>(
+                  color: const Color(0xFF132F4C),
                   icon: const Icon(Icons.account_circle, color: Colors.white, size: 28),
                   tooltip: 'Account',
                   onSelected: (value) {
@@ -475,22 +483,29 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                     return [
                       PopupMenuItem(
                         enabled: false,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(appState.userType, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black87)),
-                            Text(appState.isAdmin ? 'Admin' : 'Student', style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                          ],
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(appState.userType, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white)),
+                              Text(appState.isAdmin ? 'Admin' : 'Student', style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.6))),
+                            ],
+                          ),
                         ),
                       ),
-                      const PopupMenuDivider(),
+                      PopupMenuItem(
+                        height: 1,
+                        enabled: false,
+                        child: Divider(height: 1, color: Colors.white.withOpacity(0.1)),
+                      ),
                       const PopupMenuItem(
                         value: 'logout',
                         child: Row(
                           children: [
                             Icon(Icons.logout, color: Colors.redAccent, size: 20),
                             SizedBox(width: 8),
-                            Text('Logout', style: TextStyle(color: Colors.redAccent)),
+                            Text('Logout', style: TextStyle(color: Colors.white)),
                           ],
                         ),
                       ),
