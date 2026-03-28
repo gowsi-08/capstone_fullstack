@@ -17,7 +17,7 @@ class PathfindingService:
         """
         Load graph from MongoDB and build adjacency structure
         Returns: {
-            'nodes': {node_id: {'x': float, 'y': float, 'label': str, 'dataset_location': str}},
+            'nodes': {node_id: {'x': float, 'y': float, 'label': str, 'dataset_location': str, 'is_default': bool}},
             'adjacency': {node_id: [(neighbor_id, weight), ...]},
             'raw': original document
         }
@@ -37,7 +37,8 @@ class PathfindingService:
                     'x': node['x'],
                     'y': node['y'],
                     'label': node.get('label', ''),
-                    'dataset_location': node.get('dataset_location', None)
+                    'dataset_location': node.get('dataset_location', None),
+                    'is_default': node.get('is_default', False)
                 }
                 adjacency[node_id] = []
             
@@ -152,7 +153,8 @@ class PathfindingService:
             'total_distance': float,
             'estimated_seconds': int,
             'found': bool,
-            'reason': str (if not found)
+            'reason': str (if not found),
+            'missing': str (if not found - 'from' or 'to')
         }
         """
         try:
@@ -181,7 +183,8 @@ class PathfindingService:
                     'total_distance': 0,
                     'estimated_seconds': 0,
                     'found': False,
-                    'reason': 'location_not_mapped',
+                    'reason': 'not_mapped',
+                    'missing': 'from',
                     'error': f'Start location "{from_location}" is not mapped to any graph node'
                 }
             
@@ -191,7 +194,8 @@ class PathfindingService:
                     'total_distance': 0,
                     'estimated_seconds': 0,
                     'found': False,
-                    'reason': 'location_not_mapped',
+                    'reason': 'not_mapped',
+                    'missing': 'to',
                     'error': f'Destination "{to_location}" is not mapped to any graph node'
                 }
             
@@ -247,10 +251,42 @@ class PathfindingService:
                 'error': str(e)
             }
     
-    def save_graph(self, floor: int, nodes: List[Dict], edges: List[Dict]) -> bool:
-        """Save or update walkable graph for a floor"""
+    def save_graph(self, floor: int, nodes: List[Dict], edges: List[Dict]) -> Dict:
+        """
+        Save or update walkable graph for a floor
+        Validates uniqueness rules:
+        - Only one node per floor can have is_default=true
+        - Only one node per floor can have any given dataset_location
+        Returns: {'success': bool, 'message': str, 'errors': list}
+        """
         try:
             from datetime import datetime
+            
+            # Validate uniqueness rules
+            errors = []
+            
+            # Check is_default uniqueness
+            default_nodes = [n for n in nodes if n.get('is_default', False)]
+            if len(default_nodes) > 1:
+                node_ids = [n['id'] for n in default_nodes]
+                errors.append(f"Multiple nodes marked as default: {', '.join(node_ids)}")
+            
+            # Check dataset_location uniqueness
+            location_map = {}
+            for node in nodes:
+                dataset_loc = node.get('dataset_location')
+                if dataset_loc:
+                    if dataset_loc in location_map:
+                        errors.append(f"Duplicate dataset_location '{dataset_loc}' on nodes: {location_map[dataset_loc]}, {node['id']}")
+                    else:
+                        location_map[dataset_loc] = node['id']
+            
+            if errors:
+                return {
+                    'success': False,
+                    'message': 'Validation failed',
+                    'errors': errors
+                }
             
             # Calculate weights for edges based on node positions
             for edge in edges:
@@ -282,10 +318,18 @@ class PathfindingService:
             if floor in self.graphs_cache:
                 del self.graphs_cache[floor]
             
-            return True
+            return {
+                'success': True,
+                'message': f'Graph saved with {len(nodes)} nodes and {len(edges)} edges',
+                'errors': []
+            }
         except Exception as e:
             print(f"Error saving graph: {e}")
-            return False
+            return {
+                'success': False,
+                'message': str(e),
+                'errors': [str(e)]
+            }
     
     def delete_graph(self, floor: int) -> bool:
         """Delete walkable graph for a floor"""
@@ -538,6 +582,167 @@ class PathfindingService:
             
         except Exception as e:
             print(f"Error getting navigable locations: {e}")
+            return []
+    
+    def get_navigable_nodes(self, floor: Optional[int] = None) -> List[Dict]:
+        """
+        Get only nodes that have dataset_location assigned (replaces locations endpoints)
+        Args:
+            floor: Specific floor number, or None for all floors
+        Returns: [{
+            'node_id': str,
+            'location_name': str,
+            'x': float,
+            'y': float,
+            'floor': int,
+            'is_default': bool,
+            'record_count': int
+        }]
+        """
+        try:
+            result = []
+            
+            # Determine which floors to query
+            if floor is not None:
+                floors = [floor]
+            else:
+                # Get all floors that have graphs
+                graph_docs = db.walkable_graph.find({}, {'floor': 1})
+                floors = [doc['floor'] for doc in graph_docs]
+            
+            for floor_num in floors:
+                graph = self.build_graph(floor_num)
+                if not graph:
+                    continue
+                
+                # Get record counts for this floor
+                pipeline = [
+                    {'$match': {'floor': floor_num}},
+                    {'$group': {
+                        '_id': '$location',
+                        'count': {'$sum': 1}
+                    }}
+                ]
+                location_counts = {
+                    item['_id']: item['count']
+                    for item in db.training_data_records.aggregate(pipeline)
+                }
+                
+                # Find nodes with dataset_location assigned
+                for node_id, node_data in graph['nodes'].items():
+                    dataset_loc = node_data.get('dataset_location')
+                    if dataset_loc:
+                        result.append({
+                            'node_id': node_id,
+                            'location_name': dataset_loc,
+                            'x': node_data['x'],
+                            'y': node_data['y'],
+                            'floor': floor_num,
+                            'is_default': node_data.get('is_default', False),
+                            'record_count': location_counts.get(dataset_loc, 0)
+                        })
+            
+            # Sort by floor then location name
+            result.sort(key=lambda x: (x['floor'], x['location_name']))
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error getting navigable nodes: {e}")
+            return []
+    
+    def get_default_node(self, floor: int) -> Optional[Dict]:
+        """
+        Get the default node for a floor (node with is_default=true)
+        Returns: {'node_id': str, 'x': float, 'y': float, 'floor': int} or None
+        """
+        try:
+            graph = self.build_graph(floor)
+            if not graph:
+                return None
+            
+            # Find node with is_default=true
+            for node_id, node_data in graph['nodes'].items():
+                if node_data.get('is_default', False):
+                    return {
+                        'node_id': node_id,
+                        'x': node_data['x'],
+                        'y': node_data['y'],
+                        'floor': floor
+                    }
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error getting default node: {e}")
+            return None
+    
+    def get_node_data_groups(self, floor: int) -> List[Dict]:
+        """
+        Get WiFi data groups linked to each named node on a floor
+        Used by location marking screen to show which nodes have training data
+        Returns: [{
+            'node_id': str,
+            'location_name': str,
+            'x': float,
+            'y': float,
+            'is_default': bool,
+            'wifi_groups': [{'bssid': str, 'record_count': int, 'avg_signal': float}],
+            'total_records': int
+        }]
+        """
+        try:
+            graph = self.build_graph(floor)
+            if not graph:
+                return []
+            
+            result = []
+            
+            # For each node with dataset_location
+            for node_id, node_data in graph['nodes'].items():
+                dataset_loc = node_data.get('dataset_location')
+                if not dataset_loc:
+                    continue
+                
+                # Get WiFi records for this location
+                pipeline = [
+                    {'$match': {'floor': floor, 'location': dataset_loc}},
+                    {'$group': {
+                        '_id': '$bssid',
+                        'count': {'$sum': 1},
+                        'avg_signal': {'$avg': '$signal'}
+                    }},
+                    {'$sort': {'count': -1}}
+                ]
+                
+                wifi_groups = []
+                total_records = 0
+                
+                for group in db.training_data_records.aggregate(pipeline):
+                    wifi_groups.append({
+                        'bssid': group['_id'],
+                        'record_count': group['count'],
+                        'avg_signal': round(group['avg_signal'], 2) if group['avg_signal'] else 0
+                    })
+                    total_records += group['count']
+                
+                result.append({
+                    'node_id': node_id,
+                    'location_name': dataset_loc,
+                    'x': node_data['x'],
+                    'y': node_data['y'],
+                    'is_default': node_data.get('is_default', False),
+                    'wifi_groups': wifi_groups,
+                    'total_records': total_records
+                })
+            
+            # Sort by location name
+            result.sort(key=lambda x: x['location_name'])
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error getting node data groups: {e}")
             return []
 
 

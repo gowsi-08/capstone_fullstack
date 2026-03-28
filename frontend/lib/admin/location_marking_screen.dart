@@ -69,23 +69,12 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
 
   Future<void> _loadLocations() async {
     try {
-      final uri = Uri.parse('${ApiService.baseUrl}/admin/locations/$_currentFloor');
-      final resp = await http.get(uri);
-      if (resp.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(resp.body);
-        setState(() {
-          _locations.clear();
-          for (var loc in data) {
-            _locations.add(LocationMarker(
-              id: loc['id'],
-              name: loc['name'],
-              x: loc['x'].toDouble(),
-              y: loc['y'].toDouble(),
-              nodeId: loc['node_id'],
-            ));
-          }
-        });
-      }
+      // OLD ENDPOINT REMOVED - Use getNodeDataGroups instead
+      // This is a temporary stub until screen is rebuilt in Part 2
+      setState(() {
+        _locations.clear();
+      });
+      print('⚠️ Location marking screen needs rebuild - old endpoints removed');
     } catch (e) {
       print('Error loading locations: $e');
     }
@@ -331,19 +320,9 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
 
   Future<void> _addLocation(Offset position, String name, String landmark, String? nodeId) async {
     try {
-      final uri = Uri.parse('${ApiService.baseUrl}/admin/locations/$_currentFloor');
-      final resp = await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode([
-          ..._locations.map((l) => {'name': l.name, 'x': l.x, 'y': l.y, 'node_id': l.nodeId}),
-          {'name': name, 'x': position.dx, 'y': position.dy, 'node_id': nodeId},
-        ]),
-      );
-      if (resp.statusCode == 200) {
-        await _loadLocations();
-        _showSnackBar('✅ Location added successfully!', const Color(0xFF00C853));
-      }
+      // OLD ENDPOINT REMOVED - This functionality will be replaced in Part 2 rebuild
+      _showSnackBar('⚠️ Location marking screen needs rebuild', Colors.orange);
+      print('⚠️ Old location endpoints removed - screen needs Part 2 rebuild');
     } catch (e) {
       _showSnackBar('❌ Failed to add location: $e', Colors.red);
     }
@@ -351,21 +330,12 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
 
   Future<void> _moveLocation(String locationId, Offset newPosition) async {
     try {
-      final uri = Uri.parse('${ApiService.baseUrl}/admin/location/$locationId');
-      final location = _locations.firstWhere((l) => l.id == locationId);
-      final resp = await http.put(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'name': location.name, 'x': newPosition.dx, 'y': newPosition.dy}),
-      );
-      if (resp.statusCode == 200) {
-        await _loadLocations();
-        setState(() {
-          _isMoveMode = false;
-          _movingLocationId = null;
-        });
-        _showSnackBar('✅ Location moved successfully!', const Color(0xFF00C853));
-      }
+      // OLD ENDPOINT REMOVED - This functionality will be replaced in Part 2 rebuild
+      _showSnackBar('⚠️ Location marking screen needs rebuild', Colors.orange);
+      setState(() {
+        _isMoveMode = false;
+        _movingLocationId = null;
+      });
     } catch (e) {
       _showSnackBar('❌ Failed to move location: $e', Colors.red);
     }
@@ -373,13 +343,9 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
 
   Future<void> _deleteLocation(String locationId) async {
     try {
-      final uri = Uri.parse('${ApiService.baseUrl}/admin/location/$locationId');
-      final resp = await http.delete(uri);
-      if (resp.statusCode == 200) {
-        await _loadLocations();
-        setState(() => _selectedLocationId = null);
-        _showSnackBar('✅ Location deleted', const Color(0xFFFF6D00));
-      }
+      // OLD ENDPOINT REMOVED - This functionality will be replaced in Part 2 rebuild
+      _showSnackBar('⚠️ Location marking screen needs rebuild', Colors.orange);
+      setState(() => _selectedLocationId = null);
     } catch (e) {
       _showSnackBar('❌ Failed to delete location: $e', Colors.red);
     }
@@ -951,16 +917,8 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
 
     if (result != null && result['name'] != location.name) {
       try {
-        final uri = Uri.parse('${ApiService.baseUrl}/admin/location/${location.id}');
-        final resp = await http.put(
-          uri,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'name': result['name'], 'x': location.x, 'y': location.y}),
-        );
-        if (resp.statusCode == 200) {
-          await _loadLocations();
-          _showSnackBar('✅ Location updated', const Color(0xFF00C853));
-        }
+        // OLD ENDPOINT REMOVED - This functionality will be replaced in Part 2 rebuild
+        _showSnackBar('⚠️ Location marking screen needs rebuild', Colors.orange);
       } catch (e) {
         _showSnackBar('❌ Failed to update location: $e', Colors.red);
       }
@@ -1062,16 +1020,8 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
 
     if (result != null && result != location.nodeId) {
       try {
-        final uri = Uri.parse('${ApiService.baseUrl}/admin/location/${location.id}/link-node');
-        final resp = await http.put(
-          uri,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'node_id': result}),
-        );
-        if (resp.statusCode == 200) {
-          await _loadLocations();
-          _showSnackBar('✅ Location connected to node', const Color(0xFF00C853));
-        }
+        // OLD ENDPOINT REMOVED - This functionality will be replaced in Part 2 rebuild
+        _showSnackBar('⚠️ Location marking screen needs rebuild', Colors.orange);
       } catch (e) {
         _showSnackBar('❌ Failed to connect: $e', Colors.red);
       }

@@ -8,6 +8,7 @@ class GraphNode {
   final double y; // normalized 0.0 to 1.0
   final String? label;
   final String? datasetLocation; // Dataset location name from training_data_records
+  final bool isDefault; // Default node for fallback marker position
 
   GraphNode({
     required this.id,
@@ -15,6 +16,7 @@ class GraphNode {
     required this.y,
     this.label,
     this.datasetLocation,
+    this.isDefault = false,
   });
 
   /// Create from JSON
@@ -25,6 +27,7 @@ class GraphNode {
       y: (json['y'] as num).toDouble(),
       label: json['label'] as String?,
       datasetLocation: json['dataset_location'] as String?,
+      isDefault: json['is_default'] as bool? ?? false,
     );
   }
 
@@ -36,6 +39,7 @@ class GraphNode {
       'y': y,
       'label': label ?? '',
       'dataset_location': datasetLocation,
+      'is_default': isDefault,
     };
   }
 
@@ -46,6 +50,7 @@ class GraphNode {
     double? y,
     String? label,
     String? datasetLocation,
+    bool? isDefault,
   }) {
     return GraphNode(
       id: id ?? this.id,
@@ -53,11 +58,15 @@ class GraphNode {
       y: y ?? this.y,
       label: label ?? this.label,
       datasetLocation: datasetLocation ?? this.datasetLocation,
+      isDefault: isDefault ?? this.isDefault,
     );
   }
 
   /// Check if node is mapped to a dataset location
   bool get isMapped => datasetLocation != null && datasetLocation!.isNotEmpty;
+
+  /// Check if node is corridor-only (not mapped and not default)
+  bool get isCorridorOnly => !isMapped && !isDefault;
 
   /// Convert normalized coordinates to pixel coordinates
   Offset toPixelOffset(Size imageSize) {
@@ -474,6 +483,76 @@ class NavigableLocation {
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is NavigableLocation &&
+          runtimeType == other.runtimeType &&
+          nodeId == other.nodeId;
+
+  @override
+  int get hashCode => nodeId.hashCode;
+}
+
+/// Represents a navigable node (node with dataset_location assigned)
+/// Used by map screen for markers and search
+class NavigableNode {
+  final String nodeId;
+  final String locationName;
+  final double x; // normalized 0.0 to 1.0
+  final double y; // normalized 0.0 to 1.0
+  final int floor;
+  final bool isDefault;
+  final int recordCount;
+
+  NavigableNode({
+    required this.nodeId,
+    required this.locationName,
+    required this.x,
+    required this.y,
+    required this.floor,
+    this.isDefault = false,
+    this.recordCount = 0,
+  });
+
+  /// Create from JSON
+  factory NavigableNode.fromJson(Map<String, dynamic> json) {
+    return NavigableNode(
+      nodeId: json['node_id'] as String,
+      locationName: json['location_name'] as String,
+      x: (json['x'] as num).toDouble(),
+      y: (json['y'] as num).toDouble(),
+      floor: json['floor'] as int,
+      isDefault: json['is_default'] as bool? ?? false,
+      recordCount: json['record_count'] as int? ?? 0,
+    );
+  }
+
+  /// Convert to JSON
+  Map<String, dynamic> toJson() {
+    return {
+      'node_id': nodeId,
+      'location_name': locationName,
+      'x': x,
+      'y': y,
+      'floor': floor,
+      'is_default': isDefault,
+      'record_count': recordCount,
+    };
+  }
+
+  /// Convert normalized coordinates to pixel coordinates
+  Offset toPixelOffset(Size imageSize) {
+    return Offset(x * imageSize.width, y * imageSize.height);
+  }
+
+  /// Get display text with record count
+  String get displayText => '$locationName ($recordCount records)';
+
+  @override
+  String toString() =>
+      'NavigableNode(id: $nodeId, name: $locationName, floor: $floor, default: $isDefault, records: $recordCount)';
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is NavigableNode &&
           runtimeType == other.runtimeType &&
           nodeId == other.nodeId;
 

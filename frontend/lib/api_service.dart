@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart'; // for kIsWeb
 import 'package:http/http.dart' as http;
+import 'models/graph_models.dart';
 
 class ApiService {
   // Determine baseUrl based on platform
@@ -111,21 +112,6 @@ class ApiService {
       print('Failed to load base64 map: $e');
       return null;
     }
-  }
-
-  // ==================
-  // LOCATIONS
-  // ==================
-  static Future<List<dynamic>> getAllLocations() async {
-    try {
-      final resp = await http.get(Uri.parse('$baseUrl/locations/all'));
-      if (resp.statusCode == 200) {
-        return jsonDecode(resp.body);
-      }
-    } catch (e) {
-      print('Error fetching all locations: $e');
-    }
-    return [];
   }
 
   // ==================
@@ -508,121 +494,110 @@ class ApiService {
   }
 
   // ==================
-  // LOCATION MANAGEMENT
+  // LOCATION MANAGEMENT (DEPRECATED - Use navigation nodes instead)
+  // These endpoints were removed in Part 1 backend refactor
   // ==================
   
-  /// Get locations for a specific floor
-  static Future<List<Map<String, dynamic>>> getLocations(int floor) async {
+  // OLD ENDPOINTS REMOVED:
+  // - GET /admin/locations/{floor}
+  // - POST /admin/locations/{floor}
+  // - PUT /admin/location/{id}
+  // - DELETE /admin/location/{id}
+  // - PUT /admin/location/{id}/link-node
+  // - GET /locations/all
+  //
+  // Use getNavigableNodes(), getNodeDataGroups(), and graph management instead
+
+  // ==================
+  // NAVIGATION NODE ROUTES (New - replaces locations collection)
+  // ==================
+  
+  /// Get navigable nodes for a floor (nodes with dataset_location set)
+  static Future<List<NavigableNode>> getNavigableNodes(int floor) async {
     try {
-      final url = Uri.parse('$baseUrl/admin/locations/$floor');
-      print('📍 Fetching locations for floor $floor from: $url');
+      final url = Uri.parse('$baseUrl/navigation/nodes/$floor');
+      print('🗺️ Fetching navigable nodes for floor $floor');
       final resp = await http.get(url).timeout(const Duration(seconds: 10));
       
       if (resp.statusCode == 200) {
         final List<dynamic> data = jsonDecode(resp.body);
-        print('📍 Locations response: ${data.length} locations');
-        return data.cast<Map<String, dynamic>>();
+        print('🗺️ Navigable nodes: ${data.length} nodes');
+        return data.map((json) => NavigableNode.fromJson(json)).toList();
       } else {
-        print('❌ Locations fetch error: ${resp.statusCode} - ${resp.body}');
+        print('❌ Navigable nodes error: ${resp.statusCode} - ${resp.body}');
       }
     } catch (e) {
-      print('❌ Error fetching locations: $e');
+      print('❌ Error fetching navigable nodes: $e');
     }
     return [];
   }
 
-  /// Create a new location
-  static Future<bool> createLocation(int floor, Map<String, dynamic> data) async {
+  /// Get all navigable nodes across all floors
+  static Future<List<NavigableNode>> getAllNavigableNodes() async {
     try {
-      final url = Uri.parse('$baseUrl/admin/locations/$floor');
-      print('➕ Creating location on floor $floor: ${data['name']}');
-      final resp = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(data),
-      ).timeout(const Duration(seconds: 10));
+      final url = Uri.parse('$baseUrl/navigation/nodes/all');
+      print('🗺️ Fetching all navigable nodes');
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
       
       if (resp.statusCode == 200) {
-        print('✅ Location created successfully');
-        return true;
+        final List<dynamic> data = jsonDecode(resp.body);
+        print('🗺️ All navigable nodes: ${data.length} nodes');
+        return data.map((json) => NavigableNode.fromJson(json)).toList();
       } else {
-        print('❌ Location create error: ${resp.statusCode} - ${resp.body}');
+        print('❌ All navigable nodes error: ${resp.statusCode} - ${resp.body}');
       }
     } catch (e) {
-      print('❌ Error creating location: $e');
+      print('❌ Error fetching all navigable nodes: $e');
     }
-    return false;
+    return [];
   }
 
-  /// Update an existing location
-  static Future<bool> updateLocation(String id, Map<String, dynamic> data) async {
+  /// Get default node for a floor (fallback marker position)
+  static Future<NavigableNode?> getDefaultNode(int floor) async {
     try {
-      final url = Uri.parse('$baseUrl/admin/location/$id');
-      print('✏️ Updating location $id: ${data['name']}');
-      final resp = await http.put(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(data),
-      ).timeout(const Duration(seconds: 10));
+      final url = Uri.parse('$baseUrl/navigation/default/$floor');
+      print('🎯 Fetching default node for floor $floor');
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
       
       if (resp.statusCode == 200) {
-        print('✅ Location updated successfully');
-        return true;
+        final data = jsonDecode(resp.body);
+        if (data != null) {
+          print('🎯 Default node: found');
+          return NavigableNode.fromJson(data);
+        }
       } else {
-        print('❌ Location update error: ${resp.statusCode} - ${resp.body}');
+        print('❌ Default node error: ${resp.statusCode} - ${resp.body}');
       }
     } catch (e) {
-      print('❌ Error updating location: $e');
+      print('❌ Error fetching default node: $e');
     }
-    return false;
-  }
-
-  /// Delete a location
-  static Future<bool> deleteLocation(String id) async {
-    try {
-      final url = Uri.parse('$baseUrl/admin/location/$id');
-      print('🗑️ Deleting location $id');
-      final resp = await http.delete(url).timeout(const Duration(seconds: 10));
-      
-      if (resp.statusCode == 200) {
-        print('✅ Location deleted successfully');
-        return true;
-      } else {
-        print('❌ Location delete error: ${resp.statusCode} - ${resp.body}');
-      }
-    } catch (e) {
-      print('❌ Error deleting location: $e');
-    }
-    return false;
-  }
-
-  /// Link a location to a graph node
-  static Future<bool> linkLocationToNode(String locationId, String nodeId) async {
-    try {
-      final url = Uri.parse('$baseUrl/admin/location/$locationId/link-node');
-      print('🔗 Linking location $locationId to node $nodeId');
-      final resp = await http.put(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'node_id': nodeId}),
-      ).timeout(const Duration(seconds: 10));
-      
-      if (resp.statusCode == 200) {
-        print('✅ Location linked to node successfully');
-        return true;
-      } else {
-        print('❌ Link location error: ${resp.statusCode} - ${resp.body}');
-      }
-    } catch (e) {
-      print('❌ Error linking location: $e');
-    }
-    return false;
+    return null;
   }
 
   // ==================
-  // DATASET LOCATION MAPPING
+  // ADMIN - NODE DATA MANAGEMENT
   // ==================
   
+  /// Get WiFi data groups linked to each named node on a floor
+  static Future<List<Map<String, dynamic>>> getNodeData(int floor) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/node-data/$floor');
+      print('📊 Fetching node data groups for floor $floor');
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
+      
+      if (resp.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(resp.body);
+        print('📊 Node data groups: ${data.length} nodes with data');
+        return data.cast<Map<String, dynamic>>();
+      } else {
+        print('❌ Node data groups error: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ Error fetching node data groups: $e');
+    }
+    return [];
+  }
+
   /// Get all distinct dataset locations for a floor with assignment status
   static Future<List<Map<String, dynamic>>> getDatasetLocations(int floor) async {
     try {
@@ -690,43 +665,4 @@ class ApiService {
     return false;
   }
 
-  /// Get navigable locations for a floor
-  static Future<List<Map<String, dynamic>>> getNavigableLocations(int floor) async {
-    try {
-      final url = Uri.parse('$baseUrl/navigation/locations/$floor');
-      print('🗺️ Fetching navigable locations for floor $floor');
-      final resp = await http.get(url).timeout(const Duration(seconds: 10));
-      
-      if (resp.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(resp.body);
-        print('🗺️ Navigable locations: ${data.length} locations');
-        return data.cast<Map<String, dynamic>>();
-      } else {
-        print('❌ Navigable locations error: ${resp.statusCode} - ${resp.body}');
-      }
-    } catch (e) {
-      print('❌ Error fetching navigable locations: $e');
-    }
-    return [];
-  }
-
-  /// Get all navigable locations across all floors
-  static Future<List<Map<String, dynamic>>> getAllNavigableLocations() async {
-    try {
-      final url = Uri.parse('$baseUrl/navigation/locations/all');
-      print('🗺️ Fetching all navigable locations');
-      final resp = await http.get(url).timeout(const Duration(seconds: 10));
-      
-      if (resp.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(resp.body);
-        print('🗺️ All navigable locations: ${data.length} locations');
-        return data.cast<Map<String, dynamic>>();
-      } else {
-        print('❌ All navigable locations error: ${resp.statusCode} - ${resp.body}');
-      }
-    } catch (e) {
-      print('❌ Error fetching all navigable locations: $e');
-    }
-    return [];
-  }
 }

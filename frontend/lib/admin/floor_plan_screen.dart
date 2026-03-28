@@ -211,7 +211,7 @@ class _FloorDetailScreenState extends State<FloorDetailScreen> {
           ),
         ),
       ),
-      body: _isEditMode ? PathEditorView(floor: widget.floor, imageBytes: widget.imageBytes) : MapViewMode(floor: widget.floor, imageBytes: widget.imageBytes, onMapUpdated: widget.onMapUpdated),
+      body: _isEditMode ? PathEditorView(floor: widget.floor, imageBytes: widget.imageBytes) : MapViewMode(floor: widget.floor, imageBytes: widget.imageBytes, onMapUpdated: widget.onMapUpdated, onSwitchToEditMode: () => setState(() => _isEditMode = true)),
     );
   }
 
@@ -241,8 +241,15 @@ class MapViewMode extends StatefulWidget {
   final int floor;
   final Uint8List imageBytes;
   final VoidCallback onMapUpdated;
+  final VoidCallback? onSwitchToEditMode;
 
-  const MapViewMode({Key? key, required this.floor, required this.imageBytes, required this.onMapUpdated}) : super(key: key);
+  const MapViewMode({
+    Key? key,
+    required this.floor,
+    required this.imageBytes,
+    required this.onMapUpdated,
+    this.onSwitchToEditMode,
+  }) : super(key: key);
 
   @override
   State<MapViewMode> createState() => _MapViewModeState();
@@ -286,7 +293,14 @@ class _MapViewModeState extends State<MapViewMode> {
             _nodes.clear();
             _edges.clear();
             for (var nodeData in data['nodes'] ?? []) {
-              _nodes.add(GraphNode(id: nodeData['id'], x: nodeData['x'].toDouble(), y: nodeData['y'].toDouble(), label: nodeData['label'] ?? ''));
+              _nodes.add(GraphNode(
+                id: nodeData['id'],
+                x: nodeData['x'].toDouble(),
+                y: nodeData['y'].toDouble(),
+                label: nodeData['label'] ?? '',
+                datasetLocation: nodeData['dataset_location'],
+                isDefault: nodeData['is_default'] ?? false,
+              ));
             }
             for (var edgeData in data['edges'] ?? []) {
               _edges.add(GraphEdge(id: edgeData['id'], fromNodeId: edgeData['from_node'], toNodeId: edgeData['to_node']));
@@ -301,17 +315,18 @@ class _MapViewModeState extends State<MapViewMode> {
 
   Future<void> _loadLocations() async {
     try {
-      final uri = Uri.parse('${ApiService.baseUrl}/admin/locations/${widget.floor}');
-      final resp = await http.get(uri);
-      if (resp.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(resp.body);
-        setState(() {
-          _locations.clear();
-          for (var loc in data) {
-            _locations.add(LocationPin(name: loc['name'], x: loc['x'].toDouble(), y: loc['y'].toDouble()));
-          }
-        });
-      }
+      // Use new navigable nodes endpoint instead of old locations endpoint
+      final nodes = await ApiService.getNavigableNodes(widget.floor);
+      setState(() {
+        _locations.clear();
+        for (var node in nodes) {
+          _locations.add(LocationPin(
+            name: node['location_name'] ?? '',
+            x: (node['x'] as num).toDouble(),
+            y: (node['y'] as num).toDouble(),
+          ));
+        }
+      });
     } catch (e) {
       print('Error loading locations: $e');
     }
@@ -368,9 +383,9 @@ class _MapViewModeState extends State<MapViewMode> {
               )),
               const SizedBox(width: 12),
               Expanded(child: ElevatedButton.icon(
-                onPressed: () => Navigator.pushNamed(context, '/admin/location_marking'),
-                icon: const Icon(Icons.location_on, size: 18),
-                label: Text('Locations', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
+                onPressed: widget.onSwitchToEditMode ?? () {},
+                icon: const Icon(Icons.edit_road, size: 18),
+                label: Text('Edit Paths →', style: GoogleFonts.inter(fontWeight: FontWeight.w600)),
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF00BCD4), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 0),
               )),
             ],
@@ -436,7 +451,14 @@ class _PathEditorViewState extends State<PathEditorView> {
             _nodes.clear();
             _edges.clear();
             for (var nodeData in data['nodes'] ?? []) {
-              _nodes.add(GraphNode(id: nodeData['id'], x: nodeData['x'].toDouble(), y: nodeData['y'].toDouble(), label: nodeData['label'] ?? ''));
+              _nodes.add(GraphNode(
+                id: nodeData['id'],
+                x: nodeData['x'].toDouble(),
+                y: nodeData['y'].toDouble(),
+                label: nodeData['label'] ?? '',
+                datasetLocation: nodeData['dataset_location'],
+                isDefault: nodeData['is_default'] ?? false,
+              ));
             }
             for (var edgeData in data['edges'] ?? []) {
               _edges.add(GraphEdge(id: edgeData['id'], fromNodeId: edgeData['from_node'], toNodeId: edgeData['to_node']));
@@ -451,17 +473,18 @@ class _PathEditorViewState extends State<PathEditorView> {
 
   Future<void> _loadLocations() async {
     try {
-      final uri = Uri.parse('${ApiService.baseUrl}/admin/locations/${widget.floor}');
-      final resp = await http.get(uri);
-      if (resp.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(resp.body);
-        setState(() {
-          _locations.clear();
-          for (var loc in data) {
-            _locations.add(LocationPin(name: loc['name'], x: loc['x'].toDouble(), y: loc['y'].toDouble()));
-          }
-        });
-      }
+      // Use new navigable nodes endpoint instead of old locations endpoint
+      final nodes = await ApiService.getNavigableNodes(widget.floor);
+      setState(() {
+        _locations.clear();
+        for (var node in nodes) {
+          _locations.add(LocationPin(
+            name: node['location_name'] ?? '',
+            x: (node['x'] as num).toDouble(),
+            y: (node['y'] as num).toDouble(),
+          ));
+        }
+      });
     } catch (e) {
       print('Error loading locations: $e');
     }
@@ -793,8 +816,17 @@ class GraphNode {
   final double x;
   final double y;
   final String label;
+  final String? datasetLocation;
+  final bool isDefault;
 
-  GraphNode({required this.id, required this.x, required this.y, required this.label});
+  GraphNode({
+    required this.id,
+    required this.x,
+    required this.y,
+    required this.label,
+    this.datasetLocation,
+    this.isDefault = false,
+  });
 }
 
 class GraphEdge {
@@ -824,10 +856,10 @@ class MapViewPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Draw edges (thin lines)
+    // Draw edges - blue lines, 3px, 60% opacity
     final edgePaint = Paint()
-      ..color = const Color(0xFF2979FF).withOpacity(0.4)
-      ..strokeWidth = 2
+      ..color = const Color(0xFF2979FF).withOpacity(0.6)
+      ..strokeWidth = 3
       ..style = PaintingStyle.stroke;
 
     for (var edge in edges) {
@@ -838,45 +870,111 @@ class MapViewPainter extends CustomPainter {
       canvas.drawLine(from, to, edgePaint);
     }
 
-    // Draw nodes (small hollow circles)
+    // Draw nodes
     for (var node in nodes) {
       final pos = Offset(node.x * imageSize.width, node.y * imageSize.height);
-      final outerPaint = Paint()..color = const Color(0xFF2979FF)..style = PaintingStyle.stroke..strokeWidth = 2;
-      canvas.drawCircle(pos, 6, outerPaint);
+      
+      if (node.isDefault) {
+        // Default node: filled green circle, 12px, white star icon
+        final fillPaint = Paint()..color = const Color(0xFF00C853)..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, 12, fillPaint);
+        
+        // White border
+        final borderPaint = Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2;
+        canvas.drawCircle(pos, 12, borderPaint);
+        
+        // Draw white star icon
+        _drawStar(canvas, pos, 6, Colors.white);
+        
+        // Label: "Default" in green text
+        final textPainter = TextPainter(
+          text: TextSpan(
+            text: 'Default',
+            style: TextStyle(
+              color: const Color(0xFF00C853),
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              fontFamily: 'Inter',
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        textPainter.paint(canvas, Offset(pos.dx - textPainter.width / 2, pos.dy + 16));
+        
+      } else if (node.datasetLocation != null && node.datasetLocation!.isNotEmpty) {
+        // Named node: filled purple circle, 12px, white border, white center dot
+        final fillPaint = Paint()..color = const Color(0xFF7C4DFF)..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, 12, fillPaint);
+        
+        // White border
+        final borderPaint = Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2;
+        canvas.drawCircle(pos, 12, borderPaint);
+        
+        // White center dot
+        final centerDotPaint = Paint()..color = Colors.white..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, 3, centerDotPaint);
+        
+        // Label: location name in small white text below the node
+        final textPainter = TextPainter(
+          text: TextSpan(
+            text: node.datasetLocation!,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              fontFamily: 'Inter',
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+          maxLines: 1,
+          ellipsis: '...',
+        );
+        textPainter.layout(maxWidth: 100);
+        textPainter.paint(canvas, Offset(pos.dx - textPainter.width / 2, pos.dy + 16));
+        
+      } else {
+        // Plain corridor node: hollow teal circle, 10px radius
+        final hollowPaint = Paint()
+          ..color = const Color(0xFF00BCD4)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2;
+        canvas.drawCircle(pos, 10, hollowPaint);
+      }
     }
+  }
 
-    // Draw location pins
-    for (var location in locations) {
-      final pos = Offset(location.x, location.y);
+  void _drawStar(Canvas canvas, Offset center, double radius, Color color) {
+    final paint = Paint()..color = color..style = PaintingStyle.fill;
+    final path = Path();
+    
+    // 5-pointed star
+    for (int i = 0; i < 5; i++) {
+      double angle = (i * 4 * 3.14159265359 / 5) - (3.14159265359 / 2);
+      double x = center.dx + radius * _cos(angle);
+      double y = center.dy + radius * _sin(angle);
       
-      // Pin (triangle + circle)
-      final pinPaint = Paint()..color = const Color(0xFF7C4DFF)..style = PaintingStyle.fill;
-      canvas.drawCircle(pos, 8, pinPaint);
-      
-      final path = Path();
-      path.moveTo(pos.dx, pos.dy);
-      path.lineTo(pos.dx - 6, pos.dy + 12);
-      path.lineTo(pos.dx + 6, pos.dy + 12);
-      path.close();
-      canvas.drawPath(path, pinPaint);
-      
-      // Label
-      final textPainter = TextPainter(
-        text: TextSpan(text: location.name, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
-        textDirection: TextDirection.ltr,
-      );
-      textPainter.layout();
-      
-      final labelBg = Paint()..color = const Color(0xFF7C4DFF);
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(pos.dx - textPainter.width / 2 - 4, pos.dy + 16, textPainter.width + 8, textPainter.height + 4),
-          const Radius.circular(4),
-        ),
-        labelBg,
-      );
-      textPainter.paint(canvas, Offset(pos.dx - textPainter.width / 2, pos.dy + 18));
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
     }
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+  
+  // Simple approximations for cos and sin (good enough for star drawing)
+  double _cos(double angle) {
+    // Taylor series approximation
+    double x2 = angle * angle;
+    return 1 - x2 / 2 + x2 * x2 / 24 - x2 * x2 * x2 / 720;
+  }
+  
+  double _sin(double angle) {
+    // Taylor series approximation
+    double x2 = angle * angle;
+    return angle - angle * x2 / 6 + angle * x2 * x2 / 120;
   }
 
   @override

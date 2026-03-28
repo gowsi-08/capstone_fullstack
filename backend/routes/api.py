@@ -49,6 +49,8 @@ def login():
 # =====================
 # PREDICTION ROUTE
 # =====================
+# PREDICTION ROUTE
+# =====================
 @api_bp.route('/getlocation', methods=['POST'])
 def get_prediction():
     try:
@@ -80,6 +82,8 @@ def get_prediction():
         node_x = None
         node_y = None
         floor = None
+        default_node_x = None
+        default_node_y = None
         
         # Try to find which floor this location is on
         training_record = db.training_data_records.find_one({'location': prediction})
@@ -97,8 +101,15 @@ def get_prediction():
                             node_x = node_data['x']
                             node_y = node_data['y']
                             break
+                    
+                    # If not navigable, get default node for fallback marker
+                    if not is_navigable:
+                        default_node = pathfinding_service.get_default_node(floor)
+                        if default_node:
+                            default_node_x = default_node['x']
+                            default_node_y = default_node['y']
         
-        return jsonify([{
+        response = {
             'predicted': prediction,
             'source': 'flask_server',
             'is_navigable': is_navigable,
@@ -106,17 +117,16 @@ def get_prediction():
             'node_x': node_x,
             'node_y': node_y,
             'floor': floor
-        }])
+        }
+        
+        # Add default node coordinates if location is not navigable
+        if not is_navigable and default_node_x is not None:
+            response['default_node_x'] = default_node_x
+            response['default_node_y'] = default_node_y
+        
+        return jsonify([response])
     except Exception as e:
         print(f"❌ SERVER ERROR: {e}")
-        return jsonify({'error': str(e)}), 500
-
-@api_bp.route('/locations/all', methods=['GET'])
-def get_all_locations():
-    try:
-        locs = list(db.locations.find({}, {'_id': 0}))
-        return jsonify(locs)
-    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @api_bp.route('/health', methods=['GET'])
@@ -276,53 +286,12 @@ def get_map_base64(floor='1'):
     encoded_string = base64.b64encode(grid_out.read()).decode('utf-8')
     return jsonify({'base64': encoded_string})
 
-@api_bp.route('/admin/locations/<floor>', methods=['GET'])
-def get_locations(floor='1'):
-    locs = list(db.locations.find({'floor': floor}))
-    return jsonify([{
-        'id': str(loc['_id']), 
-        'name': loc['name'], 
-        'x': loc['x'], 
-        'y': loc['y'],
-        'node_id': loc.get('node_id')
-    } for loc in locs])
-
-@api_bp.route('/admin/locations/<floor>', methods=['POST'])
-def save_locations(floor='1'):
-    data = request.get_json()
-    db.locations.delete_many({'floor': floor})
-    for loc in data:
-        db.locations.insert_one({
-            'floor': floor, 
-            'name': loc['name'], 
-            'x': loc['x'], 
-            'y': loc['y'],
-            'node_id': loc.get('node_id')
-        })
-    return jsonify({'success': True})
-
 @api_bp.route('/admin/map_image/<floor>', methods=['GET'])
 def get_map_image(floor='1'):
     map_doc = db.maps.find_one({'floor': floor})
     if not map_doc: return jsonify({'error': 'Map not found'}), 404
     grid_out = fs.get(map_doc['file_id'])
     return send_file(BytesIO(grid_out.read()), mimetype='image/png')
-
-@api_bp.route('/admin/location/<loc_id>', methods=['PUT'])
-def edit_location(loc_id):
-    data = request.get_json()
-    result = db.locations.update_one(
-        {'_id': ObjectId(loc_id)},
-        {'$set': {'name': data.get('name'), 'x': data.get('x'), 'y': data.get('y')}}
-    )
-    if result.matched_count == 0: return jsonify({'error': 'Location not found'}), 404
-    return jsonify({'success': True})
-
-@api_bp.route('/admin/location/<loc_id>', methods=['DELETE'])
-def delete_location(loc_id):
-    result = db.locations.delete_one({'_id': ObjectId(loc_id)})
-    if result.deleted_count == 0: return jsonify({'error': 'Location not found'}), 404
-    return jsonify({'success': True})
 
 @api_bp.route('/admin/testdata', methods=['GET'])
 def get_test_data():
@@ -720,7 +689,12 @@ def get_walkable_graph(floor):
 
 @api_bp.route('/admin/graph/<int:floor>', methods=['POST'])
 def save_walkable_graph(floor):
-    """Save or update walkable graph for a floor"""
+    """
+    Save or update walkable graph for a floor
+    Validates uniqueness rules:
+    - Only one node per floor can have is_default=true
+    - Only one node per floor can have any given dataset_location
+    """
     try:
         data = request.get_json()
         if not data:
@@ -729,16 +703,14 @@ def save_walkable_graph(floor):
         nodes = data.get('nodes', [])
         edges = data.get('edges', [])
         
-        success = pathfinding_service.save_graph(floor, nodes, edges)
+        result = pathfinding_service.save_graph(floor, nodes, edges)
         
-        if success:
+        if result['success']:
             print(f"✅ GRAPH SAVED: Floor {floor} - {len(nodes)} nodes, {len(edges)} edges")
-            return jsonify({
-                'success': True,
-                'message': f'Graph saved with {len(nodes)} nodes and {len(edges)} edges'
-            })
+            return jsonify(result)
         else:
-            return jsonify({'error': 'Failed to save graph'}), 500
+            print(f"❌ GRAPH VALIDATION FAILED: {result['errors']}")
+            return jsonify(result), 400
             
     except Exception as e:
         print(f"❌ SAVE GRAPH ERROR: {e}")
@@ -815,24 +787,94 @@ def calculate_navigation_path():
         }), 500
 
 
-@api_bp.route('/admin/location/<loc_id>/link-node', methods=['PUT'])
-def link_location_to_node(loc_id):
-    """Link a location to a graph node"""
+# =====================
+# NAVIGATION NODE ROUTES (Replaces locations collection)
+# =====================
+@api_bp.route('/navigation/nodes/<int:floor>', methods=['GET'])
+def get_navigable_nodes_for_floor(floor):
+    """
+    Get only nodes that have dataset_location set (navigable destinations) for a specific floor
+    Replaces GET /admin/locations/{floor}
+    Returns: [{
+        'node_id': str,
+        'location_name': str,
+        'x': float,
+        'y': float,
+        'floor': int,
+        'is_default': bool,
+        'record_count': int
+    }]
+    """
     try:
-        data = request.get_json()
-        node_id = data.get('node_id')
-        
-        result = db.locations.update_one(
-            {'_id': ObjectId(loc_id)},
-            {'$set': {'node_id': node_id}}
-        )
-        
-        if result.matched_count == 0:
-            return jsonify({'error': 'Location not found'}), 404
-        
-        return jsonify({'success': True, 'message': 'Location linked to node'})
+        nodes = pathfinding_service.get_navigable_nodes(floor)
+        print(f"🗺️ NAVIGABLE NODES: Floor {floor} - {len(nodes)} nodes")
+        return jsonify(nodes)
     except Exception as e:
-        print(f"❌ LINK LOCATION ERROR: {e}")
+        print(f"❌ GET NAVIGABLE NODES ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/navigation/nodes/all', methods=['GET'])
+def get_all_navigable_nodes():
+    """
+    Get only nodes that have dataset_location set (navigable destinations) across all floors
+    Used by map screen search
+    Returns: [{
+        'node_id': str,
+        'location_name': str,
+        'x': float,
+        'y': float,
+        'floor': int,
+        'is_default': bool,
+        'record_count': int
+    }]
+    """
+    try:
+        nodes = pathfinding_service.get_navigable_nodes()
+        print(f"🗺️ ALL NAVIGABLE NODES: {len(nodes)} nodes across all floors")
+        return jsonify(nodes)
+    except Exception as e:
+        print(f"❌ GET ALL NAVIGABLE NODES ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/navigation/default/<int:floor>', methods=['GET'])
+def get_default_node_for_floor(floor):
+    """
+    Get the default node for a floor (node with is_default=true)
+    Used as fallback marker position when WiFi predicts unmapped location
+    Returns: {'node_id': str, 'x': float, 'y': float, 'floor': int} or null
+    """
+    try:
+        default_node = pathfinding_service.get_default_node(floor)
+        print(f"🎯 DEFAULT NODE: Floor {floor} - {default_node}")
+        return jsonify(default_node)
+    except Exception as e:
+        print(f"❌ GET DEFAULT NODE ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/node-data/<int:floor>', methods=['GET'])
+def get_node_data_groups(floor):
+    """
+    Get WiFi data groups linked to each named node on a floor
+    Used by location marking screen to show which nodes have training data
+    Returns: [{
+        'node_id': str,
+        'location_name': str,
+        'x': float,
+        'y': float,
+        'is_default': bool,
+        'wifi_groups': [{'bssid': str, 'record_count': int, 'avg_signal': float}],
+        'total_records': int
+    }]
+    """
+    try:
+        node_data = pathfinding_service.get_node_data_groups(floor)
+        print(f"📊 NODE DATA GROUPS: Floor {floor} - {len(node_data)} nodes with data")
+        return jsonify(node_data)
+    except Exception as e:
+        print(f"❌ GET NODE DATA GROUPS ERROR: {e}")
         return jsonify({'error': str(e)}), 500
 
 

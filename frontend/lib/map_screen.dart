@@ -35,6 +35,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   bool _isNavigable = false;
   double? _currentNodeX;
   double? _currentNodeY;
+  
+  // NEW: Node references for navigation
+  NavigableLocation? _defaultNode;  // Default fallback node for current floor
+  NavigableLocation? _predictedNode;  // Node for current predicted location
+  NavigableLocation? _selectedDestinationNode;  // Node for selected destination
 
   late AnimationController _userMarkerController;
   late AnimationController _destMarkerController;
@@ -129,8 +134,36 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
             .toList();
       });
       print('📍 Loaded ${_navigableLocations.length} navigable locations for floor $currentFloor');
+      
+      // Load default node for current floor
+      await _loadDefaultNode();
     } catch (e) {
       print('Error loading floor data: $e');
+    }
+  }
+
+  Future<void> _loadDefaultNode() async {
+    try {
+      final defaultNodeData = await ApiService.getDefaultNode(int.parse(currentFloor));
+      if (defaultNodeData != null) {
+        setState(() {
+          _defaultNode = NavigableLocation(
+            locationName: 'Default',
+            nodeId: defaultNodeData['node_id'] as String,
+            x: (defaultNodeData['x'] as num).toDouble(),
+            y: (defaultNodeData['y'] as num).toDouble(),
+            floor: defaultNodeData['floor'] as int,
+            recordCount: 0,
+          );
+        });
+        print('🎯 Loaded default node for floor $currentFloor');
+      } else {
+        setState(() => _defaultNode = null);
+        print('⚠️ No default node set for floor $currentFloor');
+      }
+    } catch (e) {
+      print('Error loading default node: $e');
+      setState(() => _defaultNode = null);
     }
   }
 
@@ -201,10 +234,32 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         _isNavigable = isNavigable;
         _currentNodeX = nodeX;
         _currentNodeY = nodeY;
+        
+        // Set predicted node if navigable
+        if (isNavigable && nodeX != null && nodeY != null) {
+          _predictedNode = _navigableLocations.firstWhere(
+            (loc) => loc.locationName == predicted,
+            orElse: () => NavigableLocation(
+              locationName: predicted,
+              nodeId: '',
+              x: nodeX,
+              y: nodeY,
+              floor: int.parse(currentFloor),
+              recordCount: 0,
+            ),
+          );
+        } else {
+          _predictedNode = null;
+        }
       });
 
       if (isNavigable && nodeX != null && nodeY != null && _imageSize != null) {
         final pixelPos = Offset(nodeX * _imageSize!.width, nodeY * _imageSize!.height);
+        _userMarkerController.forward(from: 0.7);
+        _animateToLocation(pixelPos);
+      } else if (!isNavigable && _defaultNode != null && _imageSize != null) {
+        // Use default node position for unmapped locations
+        final pixelPos = _defaultNode!.toPixelOffset(_imageSize!);
         _userMarkerController.forward(from: 0.7);
         _animateToLocation(pixelPos);
       }
@@ -344,7 +399,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       ..scale(targetScale);
 
     _transformationController.value = endMatrix;
-  }    _transformationController.value = endMatrix;
   }
 
   @override
@@ -955,7 +1009,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         textColor: Colors.white,
       );
     }
-  }    }
   }
 }
 
