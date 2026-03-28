@@ -162,12 +162,14 @@ class ApiService {
   static Future<Map<String, dynamic>?> getTrainingStats() async {
     try {
       final url = Uri.parse('$baseUrl/admin/training-stats');
+      print('📊 Fetching stats from: $url');
       final resp = await http.get(url).timeout(const Duration(seconds: 10));
+      print('📊 Stats response: ${resp.statusCode} - ${resp.body}');
       if (resp.statusCode == 200) {
         return jsonDecode(resp.body);
       }
     } catch (e) {
-      print('Error fetching training stats: $e');
+      print('❌ Error fetching training stats: $e');
     }
     return null;
   }

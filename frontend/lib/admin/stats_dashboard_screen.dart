@@ -34,13 +34,17 @@ class _StatsDashboardScreenState extends State<StatsDashboardScreen>
 
   Future<void> _loadStats() async {
     setState(() => _isLoading = true);
+    print('📊 Loading training stats...');
     final stats = await ApiService.getTrainingStats();
+    print('📊 Stats received: $stats');
     if (mounted) {
       setState(() {
         _trainingStats = stats;
         _isLoading = false;
       });
-      _animController.forward(from: 0);
+      if (stats != null) {
+        _animController.forward(from: 0);
+      }
     }
   }
 

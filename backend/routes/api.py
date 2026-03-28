@@ -181,9 +181,6 @@ def retrain_model():
 def training_stats():
     """Get stats about the training data from MongoDB."""
     try:
-        from services.database import get_db
-        
-        db = get_db()
         training_collection = db['training_data_records']
         
         # Get total count
