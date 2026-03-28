@@ -3,6 +3,7 @@ from services.database import db, fs
 from services.model_service import model_service
 from services.auth_service import auth_service
 from services.training_service import training_service
+from services.pathfinding_service import pathfinding_service
 from utils.image_processing import process_map_image
 from utils.csv_handler import read_test_csv
 from bson import ObjectId
@@ -246,14 +247,26 @@ def get_map_base64(floor='1'):
 @api_bp.route('/admin/locations/<floor>', methods=['GET'])
 def get_locations(floor='1'):
     locs = list(db.locations.find({'floor': floor}))
-    return jsonify([{'id': str(loc['_id']), 'name': loc['name'], 'x': loc['x'], 'y': loc['y']} for loc in locs])
+    return jsonify([{
+        'id': str(loc['_id']), 
+        'name': loc['name'], 
+        'x': loc['x'], 
+        'y': loc['y'],
+        'node_id': loc.get('node_id')
+    } for loc in locs])
 
 @api_bp.route('/admin/locations/<floor>', methods=['POST'])
 def save_locations(floor='1'):
     data = request.get_json()
     db.locations.delete_many({'floor': floor})
     for loc in data:
-        db.locations.insert_one({'floor': floor, 'name': loc['name'], 'x': loc['x'], 'y': loc['y']})
+        db.locations.insert_one({
+            'floor': floor, 
+            'name': loc['name'], 
+            'x': loc['x'], 
+            'y': loc['y'],
+            'node_id': loc.get('node_id')
+        })
     return jsonify({'success': True})
 
 @api_bp.route('/admin/map_image/<floor>', methods=['GET'])
@@ -643,5 +656,149 @@ def export_training_records():
             as_attachment=True,
             download_name=f'training_data_floor_{floor or "all"}.csv'
         )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# =====================
+# WALKABLE GRAPH ROUTES
+# =====================
+@api_bp.route('/admin/graph/<int:floor>', methods=['GET'])
+def get_walkable_graph(floor):
+    """Get walkable graph (nodes + edges) for a floor"""
+    try:
+        graph_doc = db.walkable_graph.find_one({'floor': floor})
+        if not graph_doc:
+            return jsonify({
+                'floor': floor,
+                'nodes': [],
+                'edges': [],
+                'exists': False
+            })
+        
+        # Convert ObjectId to string
+        graph_doc['_id'] = str(graph_doc['_id'])
+        graph_doc['exists'] = True
+        
+        return jsonify(graph_doc)
+    except Exception as e:
+        print(f"❌ GET GRAPH ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/graph/<int:floor>', methods=['POST'])
+def save_walkable_graph(floor):
+    """Save or update walkable graph for a floor"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        nodes = data.get('nodes', [])
+        edges = data.get('edges', [])
+        
+        success = pathfinding_service.save_graph(floor, nodes, edges)
+        
+        if success:
+            print(f"✅ GRAPH SAVED: Floor {floor} - {len(nodes)} nodes, {len(edges)} edges")
+            return jsonify({
+                'success': True,
+                'message': f'Graph saved with {len(nodes)} nodes and {len(edges)} edges'
+            })
+        else:
+            return jsonify({'error': 'Failed to save graph'}), 500
+            
+    except Exception as e:
+        print(f"❌ SAVE GRAPH ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/graph/<int:floor>', methods=['DELETE'])
+def delete_walkable_graph(floor):
+    """Delete walkable graph for a floor"""
+    try:
+        success = pathfinding_service.delete_graph(floor)
+        
+        if success:
+            print(f"🗑️ GRAPH DELETED: Floor {floor}")
+            return jsonify({'success': True, 'message': f'Graph deleted for floor {floor}'})
+        else:
+            return jsonify({'error': 'Failed to delete graph'}), 500
+            
+    except Exception as e:
+        print(f"❌ DELETE GRAPH ERROR: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# =====================
+# PATHFINDING ROUTES
+# =====================
+@api_bp.route('/navigation/path', methods=['POST'])
+def calculate_navigation_path():
+    """
+    Calculate shortest path between two locations using Dijkstra's algorithm
+    Body: {
+        "floor": 1,
+        "from_location": "Room 101",
+        "to_location": "Room 202"
+    }
+    Returns: {
+        "path_nodes": [{"x": 0.34, "y": 0.56}, ...],
+        "total_distance": 12.4,
+        "estimated_seconds": 45,
+        "found": true
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        floor = data.get('floor', 1)
+        from_location = data.get('from_location', '').strip()
+        to_location = data.get('to_location', '').strip()
+        
+        if not from_location or not to_location:
+            return jsonify({'error': 'from_location and to_location required'}), 400
+        
+        print(f"🗺️ PATHFINDING: Floor {floor}, {from_location} → {to_location}")
+        
+        result = pathfinding_service.calculate_path(floor, from_location, to_location)
+        
+        if result['found']:
+            print(f"✅ PATH FOUND: {len(result['path_nodes'])} nodes, {result['total_distance']:.2f} distance")
+        else:
+            print(f"❌ NO PATH: {result.get('error', 'Unknown error')}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"❌ PATHFINDING ERROR: {e}")
+        return jsonify({
+            'path_nodes': [],
+            'total_distance': 0,
+            'estimated_seconds': 0,
+            'found': False,
+            'error': str(e)
+        }), 500
+
+
+@api_bp.route('/admin/location/<loc_id>/link-node', methods=['PUT'])
+def link_location_to_node(loc_id):
+    """Link a location to a graph node"""
+    try:
+        data = request.get_json()
+        node_id = data.get('node_id')
+        
+        result = db.locations.update_one(
+            {'_id': ObjectId(loc_id)},
+            {'$set': {'node_id': node_id}}
+        )
+        
+        if result.matched_count == 0:
+            return jsonify({'error': 'Location not found'}), 404
+        
+        return jsonify({'success': True, 'message': 'Location linked to node'})
+        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
