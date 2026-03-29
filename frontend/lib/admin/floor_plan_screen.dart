@@ -311,7 +311,16 @@ class _PathEditorViewState extends State<PathEditorView> {
         uri,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
-          'nodes': _nodes.map((n) => {'id': n.id, 'x': n.x, 'y': n.y, 'label': n.label}).toList(),
+          'nodes': _nodes.map((n) => {
+            'id': n.id,
+            'x': n.x,
+            'y': n.y,
+            'label': n.label,
+            'dataset_location': n.datasetLocation,
+            'is_default': n.isDefault,
+            if (n.latitude != null) 'latitude': n.latitude,
+            if (n.longitude != null) 'longitude': n.longitude,
+          }).toList(),
           'edges': _edges.map((e) => {'id': e.id, 'from_node': e.fromNodeId, 'to_node': e.toNodeId}).toList(),
         }),
       );

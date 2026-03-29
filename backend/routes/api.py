@@ -58,29 +58,102 @@ def get_prediction():
         if not data:
             print("❌ No data provided in request", flush=True)
             return jsonify({'error': 'No data provided'}), 400
+        
+        # Check if this is GPS data or WiFi data
+        is_gps_data = isinstance(data, dict) and 'latitude' in data and 'longitude' in data
+        
+        if is_gps_data:
+            # GPS-based prediction
+            latitude = data.get('latitude')
+            longitude = data.get('longitude')
+            print(f"📍 API: Received GPS location request: ({latitude}, {longitude})", flush=True)
             
-        num_scans = len(data) if isinstance(data, list) else 1
-        print(f"📥 API: Received /getlocation request with {num_scans} Access Points", flush=True)
+            # Find nearest node with GPS coordinates
+            nearest_node = None
+            min_distance = float('inf')
+            
+            for floor in [1, 2, 3]:
+                graph = pathfinding_service.build_graph(floor)
+                if not graph:
+                    continue
+                
+                for nid, node_data in graph['nodes'].items():
+                    node_lat = node_data.get('latitude')
+                    node_lng = node_data.get('longitude')
+                    
+                    if node_lat is None or node_lng is None:
+                        continue
+                    
+                    # Calculate Haversine distance
+                    from math import radians, sin, cos, sqrt, atan2
+                    
+                    R = 6371000  # Earth radius in meters
+                    
+                    lat1 = radians(latitude)
+                    lat2 = radians(node_lat)
+                    dlat = radians(node_lat - latitude)
+                    dlng = radians(node_lng - longitude)
+                    
+                    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlng/2)**2
+                    c = 2 * atan2(sqrt(a), sqrt(1-a))
+                    distance = R * c
+                    
+                    if distance < min_distance:
+                        min_distance = distance
+                        nearest_node = {
+                            'node_id': nid,
+                            'x': node_data['x'],
+                            'y': node_data['y'],
+                            'floor': floor,
+                            'dataset_location': node_data.get('dataset_location'),
+                            'distance_meters': round(distance, 2)
+                        }
+            
+            if not nearest_node:
+                print("❌ No nodes with GPS coordinates found", flush=True)
+                return jsonify({'error': 'No GPS nodes available'}), 404
+            
+            prediction = nearest_node['dataset_location'] or 'Corridor'
+            print(f"📍 GPS prediction: {prediction} at node {nearest_node['node_id']} ({nearest_node['distance_meters']}m away)", flush=True)
+            
+            response = {
+                'predicted': prediction,
+                'source': 'gps_based',
+                'is_navigable': nearest_node['dataset_location'] is not None,
+                'node_id': nearest_node['node_id'],
+                'node_x': nearest_node['x'],
+                'node_y': nearest_node['y'],
+                'floor': nearest_node['floor'],
+                'distance_meters': nearest_node['distance_meters']
+            }
+            
+            print(f"✅ Sending GPS response: {response}", flush=True)
+            return jsonify([response])
         
-        bssid_to_signal = {}
-        if isinstance(data, list):
-            for scan in data:
-                bssid = str(scan.get('BSSID', scan.get('bssid', ''))).strip().lower()
-                rssi = scan.get('Signal Strength dBm', scan.get('rssi', -100))
-                bssid_to_signal[bssid] = rssi
-                print(f"  📡 BSSID: {bssid}, RSSI: {rssi}", flush=True)
         else:
-            print("❌ Expected list of scans, got something else", flush=True)
-            return jsonify({'error': 'Expected list of scans'}), 400
+            # WiFi-based prediction (original logic)
+            num_scans = len(data) if isinstance(data, list) else 1
+            print(f"📥 API: Received WiFi location request with {num_scans} Access Points", flush=True)
+            
+            bssid_to_signal = {}
+            if isinstance(data, list):
+                for scan in data:
+                    bssid = str(scan.get('BSSID', scan.get('bssid', ''))).strip().lower()
+                    rssi = scan.get('Signal Strength dBm', scan.get('rssi', -100))
+                    bssid_to_signal[bssid] = rssi
+                    print(f"  📡 BSSID: {bssid}, RSSI: {rssi}", flush=True)
+            else:
+                print("❌ Expected list of scans, got something else", flush=True)
+                return jsonify({'error': 'Expected list of scans'}), 400
 
-        print(f"🔮 Calling model_service.predict with {len(bssid_to_signal)} BSSIDs", flush=True)
-        prediction = model_service.predict(bssid_to_signal)
-        
-        if prediction is None:
-            print("❌ Model returned None - model not loaded or internal error", flush=True)
-            return jsonify({'error': 'Model not loaded or internal error'}), 500
+            print(f"🔮 Calling model_service.predict with {len(bssid_to_signal)} BSSIDs", flush=True)
+            prediction = model_service.predict(bssid_to_signal)
+            
+            if prediction is None:
+                print("❌ Model returned None - model not loaded or internal error", flush=True)
+                return jsonify({'error': 'Model not loaded or internal error'}), 500
 
-        print(f"📡 SERVER: Prediction made for {prediction}", flush=True)
+            print(f"📡 SERVER: WiFi prediction made for {prediction}", flush=True)
         
         # Check if predicted location is mapped to a graph node
         is_navigable = False
@@ -1012,7 +1085,249 @@ def get_all_navigable_locations():
     except Exception as e:
         print(f"❌ GET ALL NAVIGABLE LOCATIONS ERROR: {e}")
         return jsonify({'error': str(e)}), 500
-        return jsonify({'success': True, 'message': 'Location linked to node'})
+
+
+@api_bp.route('/admin/test_location', methods=['POST'])
+def test_location():
+    """
+    Test location prediction using WiFi or GPS
+    
+    Request body:
+    {
+        "mode": "wifi" | "gps",
+        "wifi_data": [...],  // Required if mode=wifi
+        "latitude": float,   // Required if mode=gps
+        "longitude": float   // Required if mode=gps
+    }
+    
+    Response:
+    {
+        "mode": "wifi" | "gps",
+        "predicted_location": str,
+        "node_id": str,
+        "floor": int,
+        "x": float,
+        "y": float,
+        "confidence": str,
+        "distance_meters": float  // Only for GPS mode
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
         
+        mode = data.get('mode', '').lower()
+        
+        if mode == 'wifi':
+            # WiFi-based prediction
+            wifi_data = data.get('wifi_data', [])
+            if not wifi_data:
+                return jsonify({'error': 'wifi_data is required for WiFi mode'}), 400
+            
+            print(f"📡 Testing WiFi location with {len(wifi_data)} access points", flush=True)
+            
+            # Build BSSID to signal map
+            bssid_to_signal = {}
+            for scan in wifi_data:
+                bssid = str(scan.get('BSSID', scan.get('bssid', ''))).strip().lower()
+                rssi = scan.get('Signal Strength dBm', scan.get('rssi', -100))
+                bssid_to_signal[bssid] = rssi
+            
+            # Get prediction from model
+            prediction = model_service.predict(bssid_to_signal)
+            
+            if prediction is None:
+                return jsonify({'error': 'Model prediction failed'}), 500
+            
+            # Find the node for this location
+            training_record = db.training_data_records.find_one({'location': prediction})
+            if not training_record:
+                return jsonify({
+                    'mode': 'wifi',
+                    'predicted_location': prediction,
+                    'error': 'Location not found in training data'
+                }), 404
+            
+            floor = training_record.get('floor')
+            graph = pathfinding_service.build_graph(floor)
+            
+            if not graph:
+                return jsonify({
+                    'mode': 'wifi',
+                    'predicted_location': prediction,
+                    'floor': floor,
+                    'error': 'No graph found for this floor'
+                }), 404
+            
+            # Find node with this dataset_location
+            node_found = None
+            for nid, node_data in graph['nodes'].items():
+                if node_data.get('dataset_location') == prediction:
+                    node_found = {
+                        'node_id': nid,
+                        'x': node_data['x'],
+                        'y': node_data['y'],
+                        'floor': floor
+                    }
+                    break
+            
+            if not node_found:
+                return jsonify({
+                    'mode': 'wifi',
+                    'predicted_location': prediction,
+                    'floor': floor,
+                    'error': 'Location not mapped to any node'
+                }), 404
+            
+            print(f"✅ WiFi prediction: {prediction} at node {node_found['node_id']}", flush=True)
+            
+            return jsonify({
+                'mode': 'wifi',
+                'predicted_location': prediction,
+                'node_id': node_found['node_id'],
+                'floor': node_found['floor'],
+                'x': node_found['x'],
+                'y': node_found['y'],
+                'confidence': 'model_based'
+            })
+        
+        elif mode == 'gps':
+            # GPS-based nearest node finding
+            latitude = data.get('latitude')
+            longitude = data.get('longitude')
+            
+            if latitude is None or longitude is None:
+                return jsonify({'error': 'latitude and longitude are required for GPS mode'}), 400
+            
+            print(f"📍 Testing GPS location: ({latitude}, {longitude})", flush=True)
+            
+            # Find nearest node with GPS coordinates across all floors
+            nearest_node = None
+            min_distance = float('inf')
+            
+            for floor in [1, 2, 3]:
+                graph = pathfinding_service.build_graph(floor)
+                if not graph:
+                    continue
+                
+                for nid, node_data in graph['nodes'].items():
+                    node_lat = node_data.get('latitude')
+                    node_lng = node_data.get('longitude')
+                    
+                    if node_lat is None or node_lng is None:
+                        continue
+                    
+                    # Calculate Haversine distance
+                    from math import radians, sin, cos, sqrt, atan2
+                    
+                    R = 6371000  # Earth radius in meters
+                    
+                    lat1 = radians(latitude)
+                    lat2 = radians(node_lat)
+                    dlat = radians(node_lat - latitude)
+                    dlng = radians(node_lng - longitude)
+                    
+                    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlng/2)**2
+                    c = 2 * atan2(sqrt(a), sqrt(1-a))
+                    distance = R * c
+                    
+                    if distance < min_distance:
+                        min_distance = distance
+                        nearest_node = {
+                            'node_id': nid,
+                            'x': node_data['x'],
+                            'y': node_data['y'],
+                            'floor': floor,
+                            'latitude': node_lat,
+                            'longitude': node_lng,
+                            'dataset_location': node_data.get('dataset_location'),
+                            'distance_meters': round(distance, 2)
+                        }
+            
+            if not nearest_node:
+                return jsonify({
+                    'mode': 'gps',
+                    'error': 'No nodes with GPS coordinates found'
+                }), 404
+            
+            print(f"✅ GPS nearest node: {nearest_node['node_id']} at {nearest_node['distance_meters']}m", flush=True)
+            
+            return jsonify({
+                'mode': 'gps',
+                'predicted_location': nearest_node['dataset_location'] or 'Corridor',
+                'node_id': nearest_node['node_id'],
+                'floor': nearest_node['floor'],
+                'x': nearest_node['x'],
+                'y': nearest_node['y'],
+                'distance_meters': nearest_node['distance_meters'],
+                'confidence': 'gps_based'
+            })
+        
+        else:
+            return jsonify({'error': 'Invalid mode. Use "wifi" or "gps"'}), 400
+    
     except Exception as e:
+        print(f"❌ TEST LOCATION ERROR: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/location_mode', methods=['GET'])
+def get_location_mode():
+    """
+    Get the current location prediction mode (wifi or gps)
+    
+    Response:
+    {
+        "mode": "wifi" | "gps"
+    }
+    """
+    try:
+        settings = db.app_settings.find_one({'key': 'location_mode'})
+        mode = settings['value'] if settings else 'wifi'  # Default to wifi
+        print(f"📡 Current location mode: {mode}", flush=True)
+        return jsonify({'mode': mode})
+    except Exception as e:
+        print(f"❌ GET LOCATION MODE ERROR: {e}", flush=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/location_mode', methods=['POST'])
+def set_location_mode():
+    """
+    Set the location prediction mode (wifi or gps)
+    
+    Request body:
+    {
+        "mode": "wifi" | "gps"
+    }
+    
+    Response:
+    {
+        "success": true,
+        "mode": "wifi" | "gps"
+    }
+    """
+    try:
+        data = request.get_json()
+        if not data or 'mode' not in data:
+            return jsonify({'error': 'mode is required'}), 400
+        
+        mode = data['mode'].lower()
+        if mode not in ['wifi', 'gps']:
+            return jsonify({'error': 'mode must be "wifi" or "gps"'}), 400
+        
+        # Update or insert the setting
+        db.app_settings.update_one(
+            {'key': 'location_mode'},
+            {'$set': {'key': 'location_mode', 'value': mode}},
+            upsert=True
+        )
+        
+        print(f"✅ Location mode set to: {mode}", flush=True)
+        return jsonify({'success': True, 'mode': mode})
+    except Exception as e:
+        print(f"❌ SET LOCATION MODE ERROR: {e}", flush=True)
         return jsonify({'error': str(e)}), 500

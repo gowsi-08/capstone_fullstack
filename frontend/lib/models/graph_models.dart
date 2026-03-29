@@ -9,6 +9,8 @@ class GraphNode {
   final String? label;
   final String? datasetLocation; // Dataset location name from training_data_records
   final bool isDefault; // Default node for fallback marker position
+  final double? latitude; // Optional GPS latitude
+  final double? longitude; // Optional GPS longitude
 
   GraphNode({
     required this.id,
@@ -17,6 +19,8 @@ class GraphNode {
     this.label,
     this.datasetLocation,
     this.isDefault = false,
+    this.latitude,
+    this.longitude,
   });
 
   /// Create from JSON
@@ -28,6 +32,8 @@ class GraphNode {
       label: json['label'] as String?,
       datasetLocation: json['dataset_location'] as String?,
       isDefault: json['is_default'] as bool? ?? false,
+      latitude: json['latitude'] != null ? (json['latitude'] as num).toDouble() : null,
+      longitude: json['longitude'] != null ? (json['longitude'] as num).toDouble() : null,
     );
   }
 
@@ -40,6 +46,8 @@ class GraphNode {
       'label': label ?? '',
       'dataset_location': datasetLocation,
       'is_default': isDefault,
+      if (latitude != null) 'latitude': latitude,
+      if (longitude != null) 'longitude': longitude,
     };
   }
 
@@ -51,6 +59,8 @@ class GraphNode {
     String? label,
     String? datasetLocation,
     bool? isDefault,
+    double? latitude,
+    double? longitude,
   }) {
     return GraphNode(
       id: id ?? this.id,
@@ -59,8 +69,13 @@ class GraphNode {
       label: label ?? this.label,
       datasetLocation: datasetLocation ?? this.datasetLocation,
       isDefault: isDefault ?? this.isDefault,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
     );
   }
+
+  /// Check if node has GPS coordinates set
+  bool get hasGeoLocation => latitude != null && longitude != null;
 
   /// Check if node is mapped to a dataset location
   bool get isMapped => datasetLocation != null && datasetLocation!.isNotEmpty;

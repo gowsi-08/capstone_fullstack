@@ -678,4 +678,103 @@ class ApiService {
     return false;
   }
 
+  // ==================
+  // LOCATION TESTING
+  // ==================
+  
+  /// Test location prediction using WiFi or GPS
+  static Future<Map<String, dynamic>?> testLocation({
+    required String mode,
+    List<Map<String, dynamic>>? wifiData,
+    double? latitude,
+    double? longitude,
+  }) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/test_location');
+      print('🧪 Testing location with mode: $mode');
+      
+      final body = <String, dynamic>{
+        'mode': mode,
+      };
+      
+      if (mode == 'wifi' && wifiData != null) {
+        body['wifi_data'] = wifiData;
+      } else if (mode == 'gps' && latitude != null && longitude != null) {
+        body['latitude'] = latitude;
+        body['longitude'] = longitude;
+      }
+      
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      ).timeout(const Duration(seconds: 15));
+
+      if (resp.statusCode == 200) {
+        final result = jsonDecode(resp.body);
+        print('✅ Location test result: ${result['predicted_location']}');
+        return result;
+      } else {
+        final error = jsonDecode(resp.body);
+        print('❌ Location test failed: ${error['error']}');
+        return {'error': error['error']};
+      }
+    } catch (e) {
+      print('❌ Location test error: $e');
+      return {'error': e.toString()};
+    }
+  }
+
+  // ==================
+  // LOCATION MODE SETTINGS
+  // ==================
+  
+  /// Get current location prediction mode (wifi or gps)
+  static Future<String> getLocationMode() async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/location_mode');
+      print('📡 Getting location mode');
+      
+      final resp = await http.get(url).timeout(const Duration(seconds: 10));
+
+      if (resp.statusCode == 200) {
+        final result = jsonDecode(resp.body);
+        final mode = result['mode'] ?? 'wifi';
+        print('✅ Location mode: $mode');
+        return mode;
+      } else {
+        print('❌ Failed to get location mode, defaulting to wifi');
+        return 'wifi';
+      }
+    } catch (e) {
+      print('❌ Get location mode error: $e, defaulting to wifi');
+      return 'wifi';
+    }
+  }
+  
+  /// Set location prediction mode (wifi or gps)
+  static Future<bool> setLocationMode(String mode) async {
+    try {
+      final url = Uri.parse('$baseUrl/admin/location_mode');
+      print('📡 Setting location mode to: $mode');
+      
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'mode': mode}),
+      ).timeout(const Duration(seconds: 10));
+
+      if (resp.statusCode == 200) {
+        print('✅ Location mode set to: $mode');
+        return true;
+      } else {
+        print('❌ Failed to set location mode');
+        return false;
+      }
+    } catch (e) {
+      print('❌ Set location mode error: $e');
+      return false;
+    }
+  }
+
 }

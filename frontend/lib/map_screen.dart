@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:app_settings/app_settings.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:geolocator/geolocator.dart';
 import 'api_service.dart';
 import 'app_state.dart';
 import 'navigation_service.dart';
@@ -395,16 +396,133 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   Future<void> _locateUser() async {
     if (_isLocating) return;
 
+    setState(() => _isLocating = true);
+
+    // Check location mode from server
+    final locationMode = await ApiService.getLocationMode();
+    print('📡 Location mode: $locationMode');
+
+    if (locationMode == 'gps') {
+      // GPS-based location
+      await _locateUserGPS();
+    } else {
+      // WiFi-based location (default)
+      await _locateUserWiFi();
+    }
+  }
+
+  Future<void> _locateUserGPS() async {
+    try {
+      // Check GPS permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          setState(() => _isLocating = false);
+          if (!_isTrackingLocation) {
+            Fluttertoast.showToast(
+              msg: "⚠️ Location permissions denied",
+              backgroundColor: Colors.red,
+            );
+          }
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        setState(() => _isLocating = false);
+        if (!_isTrackingLocation) {
+          Fluttertoast.showToast(
+            msg: "⚠️ Location permissions permanently denied",
+            backgroundColor: Colors.red,
+          );
+        }
+        return;
+      }
+
+      // Get GPS location
+      print('📍 Getting GPS location...');
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      print('📍 GPS: ${position.latitude}, ${position.longitude}');
+
+      // Send GPS data to server
+      final payload = {
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+      };
+
+      final result = await ApiService.predictLocation([payload]);
+
+      setState(() => _isLocating = false);
+
+      if (result == null) {
+        print('❌ GPS prediction returned null');
+        if (!_isTrackingLocation) {
+          Fluttertoast.showToast(
+            msg: "⚠️ Could not find nearest location",
+            backgroundColor: Colors.red,
+          );
+        }
+        return;
+      }
+
+      if (result != null) {
+        final String predicted = result['predicted']!;
+        final bool isNavigable = result['is_navigable'] ?? false;
+        final double? nodeX = result['node_x'];
+        final double? nodeY = result['node_y'];
+        final int? floor = result['floor'];
+        final double? distance = result['distance_meters'];
+
+        print('📍 GPS location: $predicted (${distance}m away, navigable: $isNavigable)');
+
+        if (floor != null && floor != _currentFloor) {
+          setState(() => _currentFloor = floor);
+          await _loadFloorData();
+        }
+
+        if (nodeX != null && nodeY != null) {
+          setState(() {
+            _currentLocation = predicted;
+            _currentLocationX = nodeX;
+            _currentLocationY = nodeY;
+            _isNavigable = isNavigable;
+          });
+
+          if (!_isTrackingLocation) {
+            Fluttertoast.showToast(
+              msg: "📍 You are at: $predicted",
+              backgroundColor: const Color(0xFF00C853),
+              toastLength: Toast.LENGTH_SHORT,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      print('❌ GPS location error: $e');
+      setState(() => _isLocating = false);
+      if (!_isTrackingLocation) {
+        Fluttertoast.showToast(
+          msg: "⚠️ GPS error: $e",
+          backgroundColor: Colors.red,
+        );
+      }
+    }
+  }
+
+  Future<void> _locateUserWiFi() async {
     await _checkWifiStatus();
     if (_wifiDisabled) {
+      setState(() => _isLocating = false);
       if (!_isTrackingLocation) {
         // Only show settings if not in tracking mode
         AppSettings.openAppSettings(type: AppSettingsType.wifi);
       }
       return;
     }
-
-    setState(() => _isLocating = true);
 
     List<Map<String, dynamic>> payload = [];
 

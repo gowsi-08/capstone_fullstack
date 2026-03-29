@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'app_state.dart';
+import 'api_service.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({Key? key}) : super(key: key);
@@ -14,6 +15,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _animController;
   bool _isRailExpanded = true;
+  String _locationMode = 'wifi'; // 'wifi' or 'gps'
+  bool _isLoadingMode = true;
 
   final List<DashboardCard> _cards = [
     DashboardCard(
@@ -29,6 +32,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       icon: Icons.location_on,
       color: const Color(0xFF00BCD4),
       route: '/admin/location_marking',
+    ),
+    DashboardCard(
+      title: 'Geolocation Mapping',
+      subtitle: 'Assign GPS coordinates to nodes',
+      icon: Icons.gps_fixed,
+      color: const Color(0xFFE91E63),
+      route: '/admin/geolocation_mapping',
+    ),
+    DashboardCard(
+      title: 'Location Testing',
+      subtitle: 'Test WiFi or GPS location prediction',
+      icon: Icons.science,
+      color: const Color(0xFFFF6D00),
+      route: '/admin/location_testing',
     ),
     DashboardCard(
       title: 'Training Data Collection',
@@ -61,6 +78,38 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       duration: const Duration(milliseconds: 800),
     );
     _animController.forward();
+    _loadLocationMode();
+  }
+  
+  Future<void> _loadLocationMode() async {
+    final mode = await ApiService.getLocationMode();
+    if (mounted) {
+      setState(() {
+        _locationMode = mode;
+        _isLoadingMode = false;
+      });
+    }
+  }
+  
+  Future<void> _toggleLocationMode() async {
+    final newMode = _locationMode == 'wifi' ? 'gps' : 'wifi';
+    final success = await ApiService.setLocationMode(newMode);
+    
+    if (success && mounted) {
+      setState(() => _locationMode = newMode);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Location mode changed to ${newMode.toUpperCase()}',
+            style: GoogleFonts.inter(color: Colors.white),
+          ),
+          backgroundColor: newMode == 'wifi' ? const Color(0xFF2979FF) : const Color(0xFF00C853),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   @override
@@ -309,17 +358,67 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             ],
           ),
           const Spacer(),
-          // IconButton(
-          //   icon: const Icon(Icons.notifications_outlined, color: Colors.white),
-          //   onPressed: () {},
-          // ),
-          const SizedBox(width: 8),
+          // Location Mode Toggle
+          if (!_isLoadingMode) ...[
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white.withOpacity(0.1)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _buildModeButton('WiFi', Icons.wifi, 'wifi'),
+                  const SizedBox(width: 4),
+                  _buildModeButton('GPS', Icons.gps_fixed, 'gps'),
+                ],
+              ),
+            ),
+            const SizedBox(width: 16),
+          ],
           IconButton(
             icon: const Icon(Icons.home_outlined, color: Colors.white),
             tooltip: 'Back to Map',
             onPressed: () => Navigator.pushReplacementNamed(context, '/home'),
           ),
         ],
+      ),
+    );
+  }
+  
+  Widget _buildModeButton(String label, IconData icon, String mode) {
+    final isActive = _locationMode == mode;
+    final color = mode == 'wifi' ? const Color(0xFF2979FF) : const Color(0xFF00C853);
+    
+    return GestureDetector(
+      onTap: isActive ? null : _toggleLocationMode,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: isActive ? color : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: isActive ? Colors.white : Colors.white54,
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                color: isActive ? Colors.white : Colors.white54,
+                fontSize: 13,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

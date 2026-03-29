@@ -1014,6 +1014,34 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
     return math.sqrt(math.pow(a.dx - b.dx, 2) + math.pow(a.dy - b.dy, 2));
   }
 
+  Widget _buildLegendItem({required Color color, required String label, required bool isFilled}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: isFilled ? color : Colors.transparent,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: color,
+              width: isFilled ? 0 : 1.5,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            color: Colors.white70,
+            fontSize: 10,
+          ),
+        ),
+      ],
+    );
+  }
+
   Future<void> _addLocation(Offset position, String name, String landmark, String? nodeId) async {
     try {
       // OLD ENDPOINT REMOVED - This functionality will be replaced in Part 2 rebuild
@@ -1039,11 +1067,82 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
 
   Future<void> _deleteLocation(String locationId) async {
     try {
-      // OLD ENDPOINT REMOVED - This functionality will be replaced in Part 2 rebuild
-      _showSnackBar('⚠️ Location marking screen needs rebuild', Colors.orange);
-      setState(() => _selectedLocationId = null);
+      // Find the location
+      final location = _locations.firstWhere(
+        (l) => l.id == locationId,
+        orElse: () => LocationMarker(
+          id: '',
+          name: '',
+          floor: _currentFloor,
+          x: 0,
+          y: 0,
+        ),
+      );
+      
+      if (location.id.isEmpty) {
+        _showSnackBar('❌ Location not found', Colors.red);
+        return;
+      }
+      
+      // Find the node that has this location assigned
+      final linkedNode = _graphNodes.firstWhere(
+        (n) => n.datasetLocation == location.name,
+        orElse: () => GraphNode(id: '', x: 0, y: 0),
+      );
+      
+      // If linked to a node, unlink it first
+      if (linkedNode.id.isNotEmpty) {
+        print('🔗 Unlinking location "${location.name}" from node ${linkedNode.id}');
+        
+        // Update the node to remove dataset_location
+        final nodeIndex = _graphNodes.indexWhere((n) => n.id == linkedNode.id);
+        if (nodeIndex != -1) {
+          _graphNodes[nodeIndex] = _graphNodes[nodeIndex].copyWith(
+            datasetLocation: null,
+          );
+          
+          // Save the updated graph
+          final nodesJson = _graphNodes.map((n) => n.toJson()).toList();
+          final edgesJson = _graphEdges.map((e) => e.toJson()).toList();
+          
+          print('💾 Saving graph with unlinked node...');
+          final success = await ApiService.saveWalkableGraph(_currentFloor, nodesJson, edgesJson);
+          
+          if (success) {
+            print('✅ Graph saved successfully, location unlinked');
+            
+            // Wait a moment for backend to process
+            await Future.delayed(const Duration(milliseconds: 300));
+            
+            // Reload floor data to refresh the UI
+            print('🔄 Reloading floor data...');
+            await _loadFloorData();
+            
+            if (mounted) {
+              setState(() => _selectedLocationId = null);
+              _showSnackBar('✅ Location "${location.name}" unlinked and removed', const Color(0xFF00C853));
+            }
+          } else {
+            throw Exception('Failed to save graph after unlinking');
+          }
+        } else {
+          throw Exception('Node not found in graph');
+        }
+      } else {
+        // Not linked to any node - this shouldn't happen in the new system
+        // but handle it gracefully
+        print('⚠️ Location "${location.name}" was not linked to any node');
+        setState(() {
+          _locations.removeWhere((l) => l.id == locationId);
+          _selectedLocationId = null;
+        });
+        _showSnackBar('✅ Location removed', const Color(0xFF00C853));
+      }
     } catch (e) {
-      _showSnackBar('❌ Failed to delete location: $e', Colors.red);
+      print('❌ Failed to delete location: $e');
+      if (mounted) {
+        _showSnackBar('❌ Failed to delete location: $e', Colors.red);
+      }
     }
   }
 
@@ -1297,6 +1396,55 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
                 ),
               ),
             if (_selectedLocationId != null && !_isLoadingMap) _buildLocationDetailPeek(),
+            // Legend for node colors
+            if (!_isLoadingMap && _mapImageBytes != null)
+              Positioned(
+                top: 16,
+                right: 16,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF132F4C).withOpacity(0.95),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.1),
+                      width: 1,
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Node Legend',
+                        style: GoogleFonts.inter(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _buildLegendItem(
+                        color: const Color(0xFF7C4DFF),
+                        label: 'Linked',
+                        isFilled: true,
+                      ),
+                      const SizedBox(height: 4),
+                      _buildLegendItem(
+                        color: const Color(0xFF2979FF),
+                        label: 'Unlinked',
+                        isFilled: false,
+                      ),
+                      const SizedBox(height: 4),
+                      _buildLegendItem(
+                        color: const Color(0xFFFF6D00),
+                        label: 'Default',
+                        isFilled: true,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -1305,7 +1453,8 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
 
   Widget _buildLocationDetailPeek() {
     final location = _locations.firstWhere((l) => l.id == _selectedLocationId);
-    final connectedNode = _graphNodes.where((n) => n.id == location.nodeId).firstOrNull;
+    // Check if any node has this location assigned (not by nodeId, but by dataset_location)
+    final connectedNode = _graphNodes.where((n) => n.datasetLocation == location.name).firstOrNull;
 
     return Positioned(
       bottom: 0,
@@ -1457,7 +1606,8 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
                       final location = _locations[index];
                       final isSelected = _selectedLocationId == location.id;
                       final isMultiSelected = _selectedLocationIds.contains(location.id);
-                      final connectedNode = _graphNodes.where((n) => n.id == location.nodeId).firstOrNull;
+                      // Check if any node has this location assigned (not by nodeId, but by dataset_location)
+                      final connectedNode = _graphNodes.where((n) => n.datasetLocation == location.name).firstOrNull;
 
                       return Dismissible(
                         key: Key(location.id),
@@ -1821,10 +1971,12 @@ class LocationMapPainter extends CustomPainter {
       canvas.drawLine(from, to, edgePaint);
     }
 
-    // Draw graph nodes (tiny hollow circles, 30% opacity)
+    // Draw graph nodes with different colors for linked/unlinked
     for (var node in graphNodes) {
       final pos = Offset(node.x * imageSize.width, node.y * imageSize.height);
       final isSelectedNode = node.id == selectedNodeId;
+      final isLinked = node.isMapped; // Node has dataset_location assigned
+      final isDefault = node.isDefault;
       
       if (isSelectedNode) {
         // Highlight selected node with pulsing green circle
@@ -1845,13 +1997,57 @@ class LocationMapPainter extends CustomPainter {
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2;
         canvas.drawCircle(pos, 8, borderPaint);
+      } else if (isLinked) {
+        // Linked nodes: Filled purple circle with white border
+        final linkedPaint = Paint()
+          ..color = const Color(0xFF7C4DFF)
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, 6, linkedPaint);
+        
+        // White border
+        final borderPaint = Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5;
+        canvas.drawCircle(pos, 6, borderPaint);
+        
+        // Add a small glow effect
+        final glowPaint = Paint()
+          ..color = const Color(0xFF7C4DFF).withOpacity(0.3)
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, 10, glowPaint);
+      } else if (isDefault) {
+        // Default node: Filled orange circle with white border
+        final defaultPaint = Paint()
+          ..color = const Color(0xFFFF6D00)
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, 6, defaultPaint);
+        
+        // White border
+        final borderPaint = Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5;
+        canvas.drawCircle(pos, 6, borderPaint);
+        
+        // Add a small glow effect
+        final glowPaint = Paint()
+          ..color = const Color(0xFFFF6D00).withOpacity(0.3)
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, 10, glowPaint);
       } else {
-        // Regular node rendering
+        // Unlinked nodes: Hollow blue circle (corridor nodes)
         final nodePaint = Paint()
-          ..color = const Color(0xFF2979FF).withOpacity(0.3)
+          ..color = const Color(0xFF2979FF).withOpacity(0.4)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.5;
         canvas.drawCircle(pos, 4, nodePaint);
+        
+        // Small center dot
+        final centerPaint = Paint()
+          ..color = const Color(0xFF2979FF).withOpacity(0.3)
+          ..style = PaintingStyle.fill;
+        canvas.drawCircle(pos, 1.5, centerPaint);
       }
     }
 

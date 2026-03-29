@@ -8,6 +8,8 @@ import 'admin_screen.dart';
 import 'admin_dashboard_screen.dart';
 import 'admin/floor_plan_screen.dart';
 import 'admin/location_marking_screen.dart';
+import 'admin/geolocation_mapping_screen.dart';
+import 'admin/location_testing_screen.dart';
 import 'admin/training_data_screen.dart' as admin_training;
 import 'admin/model_retraining_screen.dart';
 import 'admin/stats_dashboard_screen.dart';
@@ -72,6 +74,8 @@ class IndoorNavigationApp extends StatelessWidget {
           '/admin_dashboard': (_) => const AdminDashboardScreen(),
           '/admin/floor_plan': (_) => const FloorPlanScreen(),
           '/admin/location_marking': (_) => const LocationMarkingScreen(),
+          '/admin/geolocation_mapping': (_) => const GeolocationMappingScreen(),
+          '/admin/location_testing': (_) => const LocationTestingScreen(),
           '/admin/training_data': (_) => const admin_training.TrainingDataScreen(),
           '/admin/model_retraining': (_) => const ModelRetrainingScreen(),
           '/admin/stats_dashboard': (_) => const StatsDashboardScreen(),
