@@ -358,67 +358,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             ],
           ),
           const Spacer(),
-          // Location Mode Toggle
-          if (!_isLoadingMode) ...[
-            Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.05),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withOpacity(0.1)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildModeButton('WiFi', Icons.wifi, 'wifi'),
-                  const SizedBox(width: 4),
-                  _buildModeButton('GPS', Icons.gps_fixed, 'gps'),
-                ],
-              ),
-            ),
-            const SizedBox(width: 16),
-          ],
           IconButton(
             icon: const Icon(Icons.home_outlined, color: Colors.white),
             tooltip: 'Back to Map',
             onPressed: () => Navigator.pushReplacementNamed(context, '/home'),
           ),
         ],
-      ),
-    );
-  }
-  
-  Widget _buildModeButton(String label, IconData icon, String mode) {
-    final isActive = _locationMode == mode;
-    final color = mode == 'wifi' ? const Color(0xFF2979FF) : const Color(0xFF00C853);
-    
-    return GestureDetector(
-      onTap: isActive ? null : _toggleLocationMode,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: isActive ? color : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              color: isActive ? Colors.white : Colors.white54,
-              size: 18,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              label,
-              style: GoogleFonts.inter(
-                color: isActive ? Colors.white : Colors.white54,
-                fontSize: 13,
-                fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -434,35 +379,172 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   ? 2
                   : 1;
           
-          return Wrap(
-            spacing: 24,
-            runSpacing: 24,
-            children: List.generate(_cards.length, (index) {
-              return AnimatedBuilder(
-                animation: _animController,
-                builder: (context, child) {
-                  final delay = index * 0.1;
-                  final animValue = Curves.easeOutCubic.transform(
-                    ((_animController.value - delay) / (1 - delay)).clamp(0.0, 1.0),
-                  );
-                  
-                  return Transform.translate(
-                    offset: Offset(0, 50 * (1 - animValue)),
-                    child: Opacity(
-                      opacity: animValue,
-                      child: child,
+          return Column(
+            children: [
+              Wrap(
+                spacing: 24,
+                runSpacing: 24,
+                children: List.generate(_cards.length, (index) {
+                  return AnimatedBuilder(
+                    animation: _animController,
+                    builder: (context, child) {
+                      final delay = index * 0.1;
+                      final animValue = Curves.easeOutCubic.transform(
+                        ((_animController.value - delay) / (1 - delay)).clamp(0.0, 1.0),
+                      );
+                      
+                      return Transform.translate(
+                        offset: Offset(0, 50 * (1 - animValue)),
+                        child: Opacity(
+                          opacity: animValue,
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: SizedBox(
+                      width: (constraints.maxWidth - 32 * 2 - 24 * (crossAxisCount - 1)) /
+                          crossAxisCount * 1.30, // Increased by 5%
+                      child: _buildDashboardCard(_cards[index]),
                     ),
                   );
-                },
-                child: SizedBox(
-                  width: (constraints.maxWidth - 32 * 2 - 24 * (crossAxisCount - 1)) /
-                      crossAxisCount * 1.30, // Increased by 5%
-                  child: _buildDashboardCard(_cards[index]),
-                ),
-              );
-            }),
+                }),
+              ),
+              const SizedBox(height: 48),
+              _buildLocationModeToggle(),
+            ],
           );
         },
+      ),
+    );
+  }
+  
+  Widget _buildLocationModeToggle() {
+    if (_isLoadingMode) {
+      return const SizedBox.shrink();
+    }
+    
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF132F4C),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withOpacity(0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.settings_suggest,
+                color: Colors.white,
+                size: 24,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Location Prediction Mode',
+                      style: GoogleFonts.outfit(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Choose how the app predicts user location on the map',
+                      style: GoogleFonts.inter(
+                        color: Colors.white60,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: _buildModeCard(
+                  'WiFi Model',
+                  'Uses WiFi signals and ML model to predict indoor location',
+                  Icons.wifi,
+                  'wifi',
+                  const Color(0xFF2979FF),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: _buildModeCard(
+                  'GPS Model',
+                  'Uses GPS coordinates to find nearest mapped node',
+                  Icons.gps_fixed,
+                  'gps',
+                  const Color(0xFF00C853),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildModeCard(String title, String description, IconData icon, String mode, Color color) {
+    final isActive = _locationMode == mode;
+    
+    return GestureDetector(
+      onTap: isActive ? null : _toggleLocationMode,
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: isActive ? color.withOpacity(0.15) : Colors.white.withOpacity(0.03),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: isActive ? color : Colors.white.withOpacity(0.1),
+            width: isActive ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: isActive ? color : Colors.white.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                icon,
+                color: isActive ? Colors.white : Colors.white54,
+                size: 24,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: GoogleFonts.outfit(
+                color: isActive ? Colors.white : Colors.white70,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              description,
+              style: GoogleFonts.inter(
+                color: isActive ? Colors.white70 : Colors.white54,
+                fontSize: 12,
+                height: 1.4,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

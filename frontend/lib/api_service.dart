@@ -86,6 +86,7 @@ class ApiService {
             'node_x': data['node_x'],
             'node_y': data['node_y'],
             'floor': data['floor'],
+            'distance_meters': data['distance_meters'], // GPS mode distance
           };
         } else {
           print('❌ SERVER RESPONSE NOT A LIST OR EMPTY: ${resp.body}');
@@ -102,6 +103,48 @@ class ApiService {
       }
     } catch (e) {
       print('❌ CONNECTION FAILED: $e');
+    }
+    return null;
+  }
+  
+  /// Predict location using GPS coordinates
+  static Future<Map<String, dynamic>?> predictLocationGPS(Map<String, dynamic> gpsData) async {
+    try {
+      final url = Uri.parse('$baseUrl/getlocation');
+      print('🌐 GPS API REQUEST: $url');
+      print('🌐 GPS PAYLOAD: ${jsonEncode(gpsData)}');
+      final resp = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(gpsData), // Send GPS data as dict, not list
+      ).timeout(const Duration(seconds: 10));
+      
+      print('🌐 GPS RESPONSE STATUS: ${resp.statusCode}');
+      print('🌐 GPS RESPONSE BODY: ${resp.body}');
+      
+      if (resp.statusCode == 200) {
+        final j = jsonDecode(resp.body);
+        if (j is List && j.isNotEmpty) {
+          final data = j[0];
+          print('🌐 GPS API RESPONSE SUCCESS: ${resp.body}');
+          return {
+            'predicted': data['predicted']?.toString() ?? 'Unknown',
+            'source': data['source']?.toString() ?? 'gps_based',
+            'is_navigable': data['is_navigable'] ?? false,
+            'node_id': data['node_id'],
+            'node_x': data['node_x'],
+            'node_y': data['node_y'],
+            'floor': data['floor'],
+            'distance_meters': data['distance_meters'],
+          };
+        } else {
+          print('❌ GPS SERVER RESPONSE NOT A LIST OR EMPTY: ${resp.body}');
+        }
+      } else {
+        print('❌ GPS SERVER ERROR: ${resp.statusCode} - ${resp.body}');
+      }
+    } catch (e) {
+      print('❌ GPS CONNECTION FAILED: $e');
     }
     return null;
   }

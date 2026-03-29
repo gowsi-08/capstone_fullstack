@@ -71,18 +71,36 @@ def get_prediction():
             # Find nearest node with GPS coordinates
             nearest_node = None
             min_distance = float('inf')
+            total_nodes_checked = 0
+            nodes_with_gps = 0
             
             for floor in [1, 2, 3]:
                 graph = pathfinding_service.build_graph(floor)
                 if not graph:
+                    print(f"⚠️ No graph found for floor {floor}", flush=True)
                     continue
                 
+                print(f"🔍 Checking floor {floor}: {len(graph['nodes'])} nodes", flush=True)
+                
                 for nid, node_data in graph['nodes'].items():
+                    total_nodes_checked += 1
+                    
+                    # Debug: Print first few nodes to see structure
+                    if total_nodes_checked <= 3:
+                        print(f"🔎 Node {nid} data: {node_data}", flush=True)
+                    
                     node_lat = node_data.get('latitude')
                     node_lng = node_data.get('longitude')
                     
+                    # Debug: Check what we got
+                    if total_nodes_checked <= 5:
+                        print(f"   Node {nid}: lat={node_lat}, lng={node_lng}", flush=True)
+                    
                     if node_lat is None or node_lng is None:
                         continue
+                    
+                    nodes_with_gps += 1
+                    print(f"✅ Found GPS node: {nid} at ({node_lat}, {node_lng})", flush=True)
                     
                     # Calculate Haversine distance
                     from math import radians, sin, cos, sqrt, atan2
@@ -98,6 +116,8 @@ def get_prediction():
                     c = 2 * atan2(sqrt(a), sqrt(1-a))
                     distance = R * c
                     
+                    print(f"📏 Distance to node {nid}: {round(distance, 2)}m", flush=True)
+                    
                     if distance < min_distance:
                         min_distance = distance
                         nearest_node = {
@@ -108,6 +128,8 @@ def get_prediction():
                             'dataset_location': node_data.get('dataset_location'),
                             'distance_meters': round(distance, 2)
                         }
+            
+            print(f"📊 Summary: Checked {total_nodes_checked} nodes, found {nodes_with_gps} with GPS", flush=True)
             
             if not nearest_node:
                 print("❌ No nodes with GPS coordinates found", flush=True)

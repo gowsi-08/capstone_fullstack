@@ -449,23 +449,31 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       print('📍 GPS: ${position.latitude}, ${position.longitude}');
 
       // Send GPS data to server
-      final payload = {
+      // GPS mode: send as single dict, not wrapped in list
+      final gpsPayload = {
         'latitude': position.latitude,
         'longitude': position.longitude,
       };
 
-      final result = await ApiService.predictLocation([payload]);
+      // Call API with GPS data (send dict directly, not in list)
+      final result = await ApiService.predictLocationGPS(gpsPayload);
 
       setState(() => _isLocating = false);
 
       if (result == null) {
-        print('❌ GPS prediction returned null');
+        print('❌ GPS prediction returned null - no GPS nodes available');
+        
+        // Fallback to WiFi if GPS nodes not available
         if (!_isTrackingLocation) {
           Fluttertoast.showToast(
-            msg: "⚠️ Could not find nearest location",
-            backgroundColor: Colors.red,
+            msg: "⚠️ No GPS nodes mapped. Falling back to WiFi mode...",
+            backgroundColor: Colors.orange,
+            toastLength: Toast.LENGTH_SHORT,
           );
         }
+        
+        // Try WiFi as fallback
+        await _locateUserWiFi();
         return;
       }
 
@@ -479,16 +487,16 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
         print('📍 GPS location: $predicted (${distance}m away, navigable: $isNavigable)');
 
-        if (floor != null && floor != _currentFloor) {
-          setState(() => _currentFloor = floor);
+        if (floor != null && floor.toString() != currentFloor) {
+          setState(() => currentFloor = floor.toString());
           await _loadFloorData();
         }
 
         if (nodeX != null && nodeY != null) {
           setState(() {
-            _currentLocation = predicted;
-            _currentLocationX = nodeX;
-            _currentLocationY = nodeY;
+            predictedRoom = predicted;
+            _currentNodeX = nodeX;
+            _currentNodeY = nodeY;
             _isNavigable = isNavigable;
           });
 

@@ -38,7 +38,9 @@ class PathfindingService:
                     'y': node['y'],
                     'label': node.get('label', ''),
                     'dataset_location': node.get('dataset_location', None),
-                    'is_default': node.get('is_default', False)
+                    'is_default': node.get('is_default', False),
+                    'latitude': node.get('latitude', None),  # GPS coordinate
+                    'longitude': node.get('longitude', None)  # GPS coordinate
                 }
                 adjacency[node_id] = []
             
