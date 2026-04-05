@@ -62,6 +62,10 @@ def get_prediction():
         # Check if this is GPS data or WiFi data
         is_gps_data = isinstance(data, dict) and 'latitude' in data and 'longitude' in data
         
+        print(f"🔍 Request data type: {type(data)}", flush=True)
+        print(f"🔍 Is GPS data: {is_gps_data}", flush=True)
+        print(f"🔍 Data keys: {data.keys() if isinstance(data, dict) else 'not a dict'}", flush=True)
+        
         if is_gps_data:
             # GPS-based prediction
             latitude = data.get('latitude')
@@ -1352,4 +1356,34 @@ def set_location_mode():
         return jsonify({'success': True, 'mode': mode})
     except Exception as e:
         print(f"❌ SET LOCATION MODE ERROR: {e}", flush=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@api_bp.route('/admin/debug_gps_nodes', methods=['GET'])
+def debug_gps_nodes():
+    """Debug endpoint to check if GPS nodes are being loaded"""
+    try:
+        result = []
+        for floor in [1, 2, 3]:
+            graph = pathfinding_service.build_graph(floor)
+            if not graph:
+                continue
+            
+            for nid, node_data in graph['nodes'].items():
+                if node_data.get('latitude') is not None and node_data.get('longitude') is not None:
+                    result.append({
+                        'floor': floor,
+                        'node_id': nid,
+                        'latitude': node_data.get('latitude'),
+                        'longitude': node_data.get('longitude'),
+                        'dataset_location': node_data.get('dataset_location'),
+                        'x': node_data.get('x'),
+                        'y': node_data.get('y')
+                    })
+        
+        return jsonify({
+            'total_gps_nodes': len(result),
+            'nodes': result
+        })
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
