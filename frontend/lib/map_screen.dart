@@ -674,17 +674,15 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     // Initial scan
     _locateUser();
     
-    // Tracking interval: GPS is slower than WiFi, give it more time
-    final trackingInterval = _cachedLocationMode == 'gps' 
-        ? const Duration(seconds: 5) 
-        : const Duration(seconds: 2);
+    // Tracking interval: scan every 1 second for real-time tracking
+    const trackingInterval = Duration(seconds: 1);
     
     _locationTrackingTimer = Timer.periodic(trackingInterval, (timer) {
       _locateUser();
     });
     
     Fluttertoast.showToast(
-      msg: "📍 Location tracking started (${_cachedLocationMode.toUpperCase()} mode)",
+      msg: "📍 Live tracking started (${_cachedLocationMode.toUpperCase()} mode)",
       backgroundColor: const Color(0xFF00C853),
     );
   }
@@ -749,6 +747,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   }
 
   void _handleLogout() async {
+    // Stop any active tracking before navigating away
+    _stopLocationTracking();
     final appState = Provider.of<AppState>(context, listen: false);
     await appState.logout();
     if (!mounted) return;
@@ -888,6 +888,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         _shortestPath = [];
                       });
                       _destMarkerController.forward(from: 0.7);
+                      // Dismiss keyboard and close suggestions
+                      FocusScope.of(context).unfocus();
                     },
                     fieldViewBuilder: (ctx, ctrl, fnode, onSubmit) {
                       return TextField(
@@ -909,8 +911,19 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                   IconButton(
                     icon: const Icon(Icons.settings, color: Color(0xFF00BCD4)),
                     onPressed: () async {
+                      // Stop tracking while in admin screens to prevent background calls
+                      final wasTracking = _isTrackingLocation;
+                      if (wasTracking) _stopLocationTracking();
+                      
                       await Navigator.pushNamed(context, '/admin_dashboard');
+                      
+                      // Refresh data when coming back from admin
                       _loadFloorData();
+                      _fetchMapBytes();
+                      await _refreshLocationMode();
+                      
+                      // Resume tracking if it was active before
+                      if (wasTracking) _startLocationTracking();
                     },
                   ),
                 ],

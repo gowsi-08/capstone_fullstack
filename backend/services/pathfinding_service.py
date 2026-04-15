@@ -86,10 +86,21 @@ class PathfindingService:
         return nearest_id
     
     def find_node_by_dataset_location(self, nodes: Dict, dataset_location: str) -> Optional[str]:
-        """Find node ID that has the given dataset_location assigned"""
+        """Find node ID that has the given dataset_location assigned.
+        Also handles GPS Point labels like 'GPS Point (abc123)' by matching node_id prefix.
+        """
+        # Direct dataset_location match
         for node_id, node_data in nodes.items():
             if node_data.get('dataset_location') == dataset_location:
                 return node_id
+        
+        # Check for GPS Point label format: "GPS Point (node_id[:6])"
+        if dataset_location.startswith('GPS Point (') and dataset_location.endswith(')'):
+            node_id_prefix = dataset_location[len('GPS Point ('):-1]
+            for node_id in nodes:
+                if node_id[:6] == node_id_prefix:
+                    return node_id
+        
         return None
     
     def dijkstra(self, adjacency: Dict, start_node: str, end_node: str) -> Optional[List[str]]:
@@ -564,9 +575,12 @@ class PathfindingService:
                     for item in db.training_data_records.aggregate(pipeline)
                 }
                 
-                # Find nodes with dataset_location assigned
+                # Find nodes with dataset_location assigned OR GPS coordinates
+                seen_node_ids = set()
                 for node_id, node_data in graph['nodes'].items():
                     dataset_loc = node_data.get('dataset_location')
+                    has_gps = node_data.get('latitude') is not None and node_data.get('longitude') is not None
+                    
                     if dataset_loc:
                         result.append({
                             'location_name': dataset_loc,
@@ -576,6 +590,19 @@ class PathfindingService:
                             'floor': floor_num,
                             'record_count': location_counts.get(dataset_loc, 0)
                         })
+                        seen_node_ids.add(node_id)
+                    elif has_gps and node_id not in seen_node_ids:
+                        # GPS-only node: use as navigable location
+                        gps_label = f"GPS Point ({node_id[:6]})"
+                        result.append({
+                            'location_name': gps_label,
+                            'node_id': node_id,
+                            'x': node_data['x'],
+                            'y': node_data['y'],
+                            'floor': floor_num,
+                            'record_count': 0
+                        })
+                        seen_node_ids.add(node_id)
             
             # Sort by floor then location name
             result.sort(key=lambda x: (x['floor'], x['location_name']))
@@ -630,9 +657,12 @@ class PathfindingService:
                     for item in db.training_data_records.aggregate(pipeline)
                 }
                 
-                # Find nodes with dataset_location assigned
+                # Find nodes with dataset_location assigned OR GPS coordinates
+                seen_node_ids = set()
                 for node_id, node_data in graph['nodes'].items():
                     dataset_loc = node_data.get('dataset_location')
+                    has_gps = node_data.get('latitude') is not None and node_data.get('longitude') is not None
+                    
                     if dataset_loc:
                         result.append({
                             'node_id': node_id,
@@ -643,6 +673,20 @@ class PathfindingService:
                             'is_default': node_data.get('is_default', False),
                             'record_count': location_counts.get(dataset_loc, 0)
                         })
+                        seen_node_ids.add(node_id)
+                    elif has_gps and node_id not in seen_node_ids:
+                        # GPS-only node: treat as navigable for pathfinding
+                        gps_label = f"GPS Point ({node_id[:6]})"
+                        result.append({
+                            'node_id': node_id,
+                            'location_name': gps_label,
+                            'x': node_data['x'],
+                            'y': node_data['y'],
+                            'floor': floor_num,
+                            'is_default': node_data.get('is_default', False),
+                            'record_count': 0
+                        })
+                        seen_node_ids.add(node_id)
             
             # Sort by floor then location name
             result.sort(key=lambda x: (x['floor'], x['location_name']))

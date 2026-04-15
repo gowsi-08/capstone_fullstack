@@ -156,7 +156,12 @@ def get_prediction():
                     print("❌ No nodes found at all in any graph", flush=True)
                     return jsonify({'error': 'No nodes available in graph'}), 404
             
-            prediction = nearest_node['dataset_location'] or 'Corridor'
+            if nearest_node['dataset_location']:
+                prediction = nearest_node['dataset_location']
+            else:
+                # GPS-only node: use the special label format
+                prediction = f"GPS Point ({nearest_node['node_id'][:6]})"
+            
             print(f"📍 GPS prediction: {prediction} at node {nearest_node['node_id']} ({nearest_node['distance_meters']}m away)", flush=True)
             
             response = {

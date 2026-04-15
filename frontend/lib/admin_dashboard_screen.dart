@@ -257,7 +257,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           InkWell(
             onTap: () {
               appState.logout();
-              Navigator.pushReplacementNamed(context, '/login');
+              Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
             },
             child: Container(
               margin: const EdgeInsets.fromLTRB(16, 0, 16, 24),
@@ -359,9 +359,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
           ),
           const Spacer(),
           IconButton(
-            icon: const Icon(Icons.home_outlined, color: Colors.white),
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
             tooltip: 'Back to Map',
-            onPressed: () => Navigator.pushReplacementNamed(context, '/home'),
+            onPressed: () => Navigator.pop(context),
           ),
         ],
       ),

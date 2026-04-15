@@ -264,17 +264,10 @@ class _PathEditorViewState extends State<PathEditorView> {
             _nodes.clear();
             _edges.clear();
             for (var nodeData in data['nodes'] ?? []) {
-              _nodes.add(GraphNode(
-                id: nodeData['id'],
-                x: nodeData['x'].toDouble(),
-                y: nodeData['y'].toDouble(),
-                label: nodeData['label'] ?? '',
-                datasetLocation: nodeData['dataset_location'],
-                isDefault: nodeData['is_default'] ?? false,
-              ));
+              _nodes.add(GraphNode.fromJson(Map<String, dynamic>.from(nodeData)));
             }
             for (var edgeData in data['edges'] ?? []) {
-              _edges.add(GraphEdge(id: edgeData['id'], fromNodeId: edgeData['from_node'], toNodeId: edgeData['to_node']));
+              _edges.add(GraphEdge.fromJson(Map<String, dynamic>.from(edgeData)));
             }
           });
         }

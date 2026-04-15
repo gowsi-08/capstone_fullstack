@@ -138,22 +138,11 @@ class _LocationMarkingScreenState extends State<LocationMarkingScreen> with Tick
           _graphEdges.clear();
           
           for (var nodeData in graphData['nodes'] ?? []) {
-            _graphNodes.add(GraphNode(
-              id: nodeData['id'],
-              x: nodeData['x'].toDouble(),
-              y: nodeData['y'].toDouble(),
-              label: nodeData['label'] ?? '',
-              datasetLocation: nodeData['dataset_location'],
-              isDefault: nodeData['is_default'] ?? false,
-            ));
+            _graphNodes.add(GraphNode.fromJson(Map<String, dynamic>.from(nodeData)));
           }
           
           for (var edgeData in graphData['edges'] ?? []) {
-            _graphEdges.add(GraphEdge(
-              id: edgeData['id'],
-              fromNodeId: edgeData['from_node'],
-              toNodeId: edgeData['to_node'],
-            ));
+            _graphEdges.add(GraphEdge.fromJson(Map<String, dynamic>.from(edgeData)));
           }
         });
         print('📊 Loaded graph: ${_graphNodes.length} nodes, ${_graphEdges.length} edges for floor $_currentFloor');
