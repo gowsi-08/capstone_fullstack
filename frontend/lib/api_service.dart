@@ -83,10 +83,10 @@ class ApiService {
             'source': data['source']?.toString() ?? 'local',
             'is_navigable': data['is_navigable'] ?? false,
             'node_id': data['node_id'],
-            'node_x': data['node_x'],
-            'node_y': data['node_y'],
-            'floor': data['floor'],
-            'distance_meters': data['distance_meters'], // GPS mode distance
+            'node_x': (data['node_x'] as num?)?.toDouble(),
+            'node_y': (data['node_y'] as num?)?.toDouble(),
+            'floor': data['floor'] is int ? data['floor'] : int.tryParse(data['floor']?.toString() ?? ''),
+            'distance_meters': (data['distance_meters'] as num?)?.toDouble(),
           };
         } else {
           print('❌ SERVER RESPONSE NOT A LIST OR EMPTY: ${resp.body}');
@@ -132,10 +132,10 @@ class ApiService {
             'source': data['source']?.toString() ?? 'gps_based',
             'is_navigable': data['is_navigable'] ?? false,
             'node_id': data['node_id'],
-            'node_x': data['node_x'],
-            'node_y': data['node_y'],
-            'floor': data['floor'],
-            'distance_meters': data['distance_meters'],
+            'node_x': (data['node_x'] as num?)?.toDouble(),
+            'node_y': (data['node_y'] as num?)?.toDouble(),
+            'floor': data['floor'] is int ? data['floor'] : int.tryParse(data['floor']?.toString() ?? ''),
+            'distance_meters': (data['distance_meters'] as num?)?.toDouble(),
           };
         } else {
           print('❌ GPS SERVER RESPONSE NOT A LIST OR EMPTY: ${resp.body}');

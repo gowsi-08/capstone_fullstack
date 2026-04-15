@@ -54,6 +54,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   Timer? _locationTrackingTimer;
   bool _isTrackingLocation = false;
   bool _isLocating = false;
+  String _cachedLocationMode = 'wifi'; // Cached to avoid server call every tick
   Map<String, List<Map<String, dynamic>>> _groupedTestData = {};
 
   bool _isLoading = true;
@@ -317,6 +318,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     _loadAllNavigableLocations();
     _fetchMapBytes();
     _checkWifiStatus();
+    _refreshLocationMode(); // Cache location mode early
     _checkAndEnsureModelTrained(); // Check model status and retrain if needed
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen((results) {
       setState(() {
@@ -393,21 +395,32 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
   }
 
+  /// Refresh the cached location mode from server (call once, not every tick)
+  Future<void> _refreshLocationMode() async {
+    try {
+      _cachedLocationMode = await ApiService.getLocationMode();
+      print('📡 Location mode refreshed: $_cachedLocationMode');
+    } catch (e) {
+      print('⚠️ Failed to refresh location mode, using cached: $_cachedLocationMode');
+    }
+  }
+
   Future<void> _locateUser() async {
     if (_isLocating) return;
 
     setState(() => _isLocating = true);
 
-    // Check location mode from server
-    final locationMode = await ApiService.getLocationMode();
-    print('📡 Location mode: $locationMode');
-
-    if (locationMode == 'gps') {
-      // GPS-based location
-      await _locateUserGPS();
-    } else {
-      // WiFi-based location (default)
-      await _locateUserWiFi();
+    try {
+      if (_cachedLocationMode == 'gps') {
+        await _locateUserGPS();
+      } else {
+        await _locateUserWiFi();
+      }
+    } finally {
+      // Ensure _isLocating is always reset even if an exception occurs
+      if (mounted) {
+        setState(() => _isLocating = false);
+      }
     }
   }
 
@@ -418,7 +431,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          setState(() => _isLocating = false);
           if (!_isTrackingLocation) {
             Fluttertoast.showToast(
               msg: "⚠️ Location permissions denied",
@@ -430,7 +442,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       }
 
       if (permission == LocationPermission.deniedForever) {
-        setState(() => _isLocating = false);
         if (!_isTrackingLocation) {
           Fluttertoast.showToast(
             msg: "⚠️ Location permissions permanently denied",
@@ -440,78 +451,87 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
         return;
       }
 
-      // Get GPS location
+      // Get GPS location with timeout to prevent blocking tracking
       print('📍 Getting GPS location...');
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
+      ).timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => throw Exception('GPS timeout - took too long'),
       );
 
       print('📍 GPS: ${position.latitude}, ${position.longitude}');
 
-      // Send GPS data to server
-      // GPS mode: send as single dict, not wrapped in list
       final gpsPayload = {
         'latitude': position.latitude,
         'longitude': position.longitude,
       };
 
-      // Call API with GPS data (send dict directly, not in list)
       final result = await ApiService.predictLocationGPS(gpsPayload);
 
-      setState(() => _isLocating = false);
-
       if (result == null) {
-        print('❌ GPS prediction returned null - no GPS nodes available');
+        print('❌ GPS prediction returned null - no GPS nodes available, falling back to WiFi');
         
-        // Fallback to WiFi if GPS nodes not available
         if (!_isTrackingLocation) {
           Fluttertoast.showToast(
-            msg: "⚠️ No GPS nodes mapped. Falling back to WiFi mode...",
+            msg: "⚠️ No GPS nodes mapped. Falling back to WiFi...",
             backgroundColor: Colors.orange,
             toastLength: Toast.LENGTH_SHORT,
           );
         }
-        
-        // Try WiFi as fallback
+        // Always fallback to WiFi when GPS returns no result (both manual and tracking)
         await _locateUserWiFi();
         return;
       }
 
-      if (result != null) {
-        final String predicted = result['predicted']!;
-        final bool isNavigable = result['is_navigable'] ?? false;
-        final double? nodeX = result['node_x'];
-        final double? nodeY = result['node_y'];
-        final int? floor = result['floor'];
-        final double? distance = result['distance_meters'];
+      final String predicted = result['predicted']!;
+      final bool isNavigable = result['is_navigable'] ?? false;
+      // Safely cast node_x/node_y to double (JSON may return int)
+      final double? nodeX = (result['node_x'] as num?)?.toDouble();
+      final double? nodeY = (result['node_y'] as num?)?.toDouble();
+      final int? floor = result['floor'] is int 
+          ? result['floor'] 
+          : int.tryParse(result['floor']?.toString() ?? '');
+      final double? distance = (result['distance_meters'] as num?)?.toDouble();
 
-        print('📍 GPS location: $predicted (${distance}m away, navigable: $isNavigable)');
+      print('📍 GPS location: $predicted (${distance}m away, navigable: $isNavigable)');
 
-        if (floor != null && floor.toString() != currentFloor) {
-          setState(() => currentFloor = floor.toString());
-          await _loadFloorData();
+      // Handle floor change
+      if (floor != null && floor.toString() != currentFloor) {
+        setState(() => currentFloor = floor.toString());
+        await _loadFloorData();
+        await _fetchMapBytes(); // Also reload the map image for the new floor
+      }
+
+      if (nodeX != null && nodeY != null && mounted) {
+        setState(() {
+          predictedRoom = predicted;
+          _currentNodeX = nodeX;
+          _currentNodeY = nodeY;
+          _isNavigable = isNavigable;
+        });
+
+        // Animate/update marker for BOTH tracking and manual modes
+        if (_imageSize != null) {
+          final pixelPos = Offset(nodeX * _imageSize!.width, nodeY * _imageSize!.height);
+          _userMarkerController.forward(from: 0.7);
+          
+          // Only pan/zoom the map on first manual locate, not during tracking
+          if (!_isTrackingLocation) {
+            _animateToLocation(pixelPos);
+          }
         }
 
-        if (nodeX != null && nodeY != null) {
-          setState(() {
-            predictedRoom = predicted;
-            _currentNodeX = nodeX;
-            _currentNodeY = nodeY;
-            _isNavigable = isNavigable;
-          });
-
-          if (!_isTrackingLocation) {
-            Fluttertoast.showToast(
-              msg: "📍 You are at: $predicted",
-              backgroundColor: const Color(0xFF00C853),
-              toastLength: Toast.LENGTH_SHORT,
-            );
-          }
+        if (!_isTrackingLocation) {
+          Fluttertoast.showToast(
+            msg: "📍 You are at: $predicted",
+            backgroundColor: const Color(0xFF00C853),
+            toastLength: Toast.LENGTH_SHORT,
+          );
         }
       }
     } catch (e) {
       print('❌ GPS location error: $e');
-      setState(() => _isLocating = false);
       if (!_isTrackingLocation) {
         Fluttertoast.showToast(
           msg: "⚠️ GPS error: $e",
@@ -524,9 +544,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   Future<void> _locateUserWiFi() async {
     await _checkWifiStatus();
     if (_wifiDisabled) {
-      setState(() => _isLocating = false);
       if (!_isTrackingLocation) {
-        // Only show settings if not in tracking mode
         AppSettings.openAppSettings(type: AppSettingsType.wifi);
       }
       return;
@@ -538,7 +556,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       final canScan = await WiFiScan.instance.canStartScan();
       if (canScan == CanStartScan.yes) {
          await WiFiScan.instance.startScan();
-         // Wait longer for scan to complete - increased to 1500ms
          await Future.delayed(const Duration(milliseconds: 1500));
          final results = await WiFiScan.instance.getScannedResults();
          if (results.isNotEmpty) {
@@ -551,9 +568,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
            print('⚠️ WiFi scan returned 0 results');
          }
       } else {
-        // Handle other cases (failed, notSupported, etc.)
         print('⚠️ Cannot start WiFi scan: $canScan');
-        setState(() => _isLocating = false);
         if (!_isTrackingLocation) {
           Fluttertoast.showToast(
             msg: "⚠️ WiFi scanning not available. Check permissions and WiFi.",
@@ -564,7 +579,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       }
     } catch (e) {
       print("❌ Scan Error: $e");
-      setState(() => _isLocating = false);
       if (!_isTrackingLocation) {
         Fluttertoast.showToast(
           msg: "⚠️ WiFi scan error: $e",
@@ -575,7 +589,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     }
 
     if (payload.isEmpty) {
-      setState(() => _isLocating = false);
       if (!_isTrackingLocation) {
         Fluttertoast.showToast(
           msg: "⚠️ No Wi-Fi signals found. Make sure WiFi is enabled and nearby.",
@@ -588,8 +601,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     print('📤 Sending ${payload.length} WiFi signals to server for prediction');
     final result = await ApiService.predictLocation(payload);
-    
-    setState(() => _isLocating = false);
 
     if (result == null) {
       print('❌ predictLocation returned null - server error or network issue');
@@ -616,62 +627,64 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       return;
     }
 
-    if (result != null) {
-      final String predicted = result['predicted']!;
-      final bool isNavigable = result['is_navigable'] ?? false;
-      final double? nodeX = result['node_x'];
-      final double? nodeY = result['node_y'];
-      final int? floor = result['floor'];
-      
-      print('📍 Location predicted: $predicted (navigable: $isNavigable)');
-      
-      setState(() {
-        predictedRoom = predicted;
-        _isNavigable = isNavigable;
-        _currentNodeX = nodeX;
-        _currentNodeY = nodeY;
-      });
-      
-      // Only animate on first location or manual button press
-      if (!_isTrackingLocation && isNavigable && nodeX != null && nodeY != null && _imageSize != null) {
-        // Animate to the graph node position
-        final pixelPos = Offset(nodeX * _imageSize!.width, nodeY * _imageSize!.height);
-        _userMarkerController.forward(from: 0.7);
-        _animateToLocation(pixelPos);
-      } else if (!_isTrackingLocation && !isNavigable && _defaultNode != null && _imageSize != null) {
-        // Animate to default node for unmapped locations
-        final pixelPos = _defaultNode!.toPixelOffset(_imageSize!);
-        _userMarkerController.forward(from: 0.7);
-        _animateToLocation(pixelPos);
-      } else if (_isTrackingLocation && isNavigable && nodeX != null && nodeY != null) {
-        // Just update marker position without animation during tracking
-        _userMarkerController.forward(from: 0.7);
-      }
-    } else {
+    final String predicted = result['predicted']!;
+    final bool isNavigable = result['is_navigable'] ?? false;
+    // Safely cast to double (JSON may return int)
+    final double? nodeX = (result['node_x'] as num?)?.toDouble();
+    final double? nodeY = (result['node_y'] as num?)?.toDouble();
+    final int? floor = result['floor'] is int 
+        ? result['floor'] 
+        : int.tryParse(result['floor']?.toString() ?? '');
+    
+    print('📍 Location predicted: $predicted (navigable: $isNavigable)');
+    
+    if (!mounted) return;
+    
+    setState(() {
+      predictedRoom = predicted;
+      _isNavigable = isNavigable;
+      _currentNodeX = nodeX;
+      _currentNodeY = nodeY;
+    });
+    
+    // Update marker animation for both tracking and manual modes
+    if (isNavigable && nodeX != null && nodeY != null && _imageSize != null) {
+      final pixelPos = Offset(nodeX * _imageSize!.width, nodeY * _imageSize!.height);
+      _userMarkerController.forward(from: 0.7);
       if (!_isTrackingLocation) {
-        Fluttertoast.showToast(
-          msg: "⚠️ Could not predict location. Server error.",
-          backgroundColor: Colors.red,
-        );
+        _animateToLocation(pixelPos);
+      }
+    } else if (!isNavigable && _defaultNode != null && _imageSize != null) {
+      final pixelPos = _defaultNode!.toPixelOffset(_imageSize!);
+      _userMarkerController.forward(from: 0.7);
+      if (!_isTrackingLocation) {
+        _animateToLocation(pixelPos);
       }
     }
   }
 
-  void _startLocationTracking() {
+  void _startLocationTracking() async {
     if (_isTrackingLocation) return;
+    
+    // Refresh location mode once when tracking starts (not every tick)
+    await _refreshLocationMode();
     
     setState(() => _isTrackingLocation = true);
     
     // Initial scan
     _locateUser();
     
-    // Start periodic scanning every 2 seconds
-    _locationTrackingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+    // Tracking interval: GPS is slower than WiFi, give it more time
+    final trackingInterval = _cachedLocationMode == 'gps' 
+        ? const Duration(seconds: 5) 
+        : const Duration(seconds: 2);
+    
+    _locationTrackingTimer = Timer.periodic(trackingInterval, (timer) {
       _locateUser();
     });
     
     Fluttertoast.showToast(
-      msg: "📍 Location tracking started",
+      msg: "📍 Location tracking started (${_cachedLocationMode.toUpperCase()} mode)",
       backgroundColor: const Color(0xFF00C853),
     );
   }
@@ -1045,8 +1058,13 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                         if (_isNavigable && _currentNodeX != null && _currentNodeY != null) {
                           // Navigable: show at actual node position
                           markerPos = Offset(_currentNodeX! * _imageSize!.width, _currentNodeY! * _imageSize!.height);
+                        } else if (_currentNodeX != null && _currentNodeY != null) {
+                          // GPS returned a valid node but it has no dataset_location (corridor node)
+                          // Still show marker at the node's position
+                          markerPos = Offset(_currentNodeX! * _imageSize!.width, _currentNodeY! * _imageSize!.height);
+                          isApproximate = true;
                         } else if (_defaultNode != null) {
-                          // Not navigable: show at default node position
+                          // Fallback: show at default node position
                           markerPos = _defaultNode!.toPixelOffset(_imageSize!);
                           isApproximate = true;
                         }

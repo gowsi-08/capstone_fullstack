@@ -72,16 +72,20 @@ def get_prediction():
             longitude = data.get('longitude')
             print(f"📍 API: Received GPS location request: ({latitude}, {longitude})", flush=True)
             
+            from math import radians, sin, cos, sqrt, atan2
+            
             # Find nearest node with GPS coordinates
             nearest_node = None
             min_distance = float('inf')
             total_nodes_checked = 0
             nodes_with_gps = 0
             
+            # Also track a fallback node (default node or any node with dataset_location)
+            fallback_node = None
+            
             for floor in [1, 2, 3]:
                 graph = pathfinding_service.build_graph(floor)
                 if not graph:
-                    print(f"⚠️ No graph found for floor {floor}", flush=True)
                     continue
                 
                 print(f"🔍 Checking floor {floor}: {len(graph['nodes'])} nodes", flush=True)
@@ -89,26 +93,36 @@ def get_prediction():
                 for nid, node_data in graph['nodes'].items():
                     total_nodes_checked += 1
                     
-                    # Debug: Print first few nodes to see structure
-                    if total_nodes_checked <= 3:
-                        print(f"🔎 Node {nid} data: {node_data}", flush=True)
+                    # Track fallback: prefer default node, then any node with dataset_location
+                    if fallback_node is None:
+                        if node_data.get('is_default', False):
+                            fallback_node = {
+                                'node_id': nid,
+                                'x': node_data['x'],
+                                'y': node_data['y'],
+                                'floor': floor,
+                                'dataset_location': node_data.get('dataset_location'),
+                                'distance_meters': -1
+                            }
+                        elif node_data.get('dataset_location') and fallback_node is None:
+                            fallback_node = {
+                                'node_id': nid,
+                                'x': node_data['x'],
+                                'y': node_data['y'],
+                                'floor': floor,
+                                'dataset_location': node_data.get('dataset_location'),
+                                'distance_meters': -1
+                            }
                     
                     node_lat = node_data.get('latitude')
                     node_lng = node_data.get('longitude')
-                    
-                    # Debug: Check what we got
-                    if total_nodes_checked <= 5:
-                        print(f"   Node {nid}: lat={node_lat}, lng={node_lng}", flush=True)
                     
                     if node_lat is None or node_lng is None:
                         continue
                     
                     nodes_with_gps += 1
-                    print(f"✅ Found GPS node: {nid} at ({node_lat}, {node_lng})", flush=True)
                     
                     # Calculate Haversine distance
-                    from math import radians, sin, cos, sqrt, atan2
-                    
                     R = 6371000  # Earth radius in meters
                     
                     lat1 = radians(latitude)
@@ -119,8 +133,6 @@ def get_prediction():
                     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlng/2)**2
                     c = 2 * atan2(sqrt(a), sqrt(1-a))
                     distance = R * c
-                    
-                    print(f"📏 Distance to node {nid}: {round(distance, 2)}m", flush=True)
                     
                     if distance < min_distance:
                         min_distance = distance
@@ -135,9 +147,14 @@ def get_prediction():
             
             print(f"📊 Summary: Checked {total_nodes_checked} nodes, found {nodes_with_gps} with GPS", flush=True)
             
+            # If no GPS-mapped nodes found, use fallback node so the app still works
             if not nearest_node:
-                print("❌ No nodes with GPS coordinates found", flush=True)
-                return jsonify({'error': 'No GPS nodes available'}), 404
+                if fallback_node:
+                    print(f"⚠️ No GPS nodes found, using fallback node: {fallback_node['node_id']}", flush=True)
+                    nearest_node = fallback_node
+                else:
+                    print("❌ No nodes found at all in any graph", flush=True)
+                    return jsonify({'error': 'No nodes available in graph'}), 404
             
             prediction = nearest_node['dataset_location'] or 'Corridor'
             print(f"📍 GPS prediction: {prediction} at node {nearest_node['node_id']} ({nearest_node['distance_meters']}m away)", flush=True)
